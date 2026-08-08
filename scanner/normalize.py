@@ -50,6 +50,47 @@ def query_variants(title):
     return variants
 
 
+def comp_filter(fc_title, sales):
+    """Keep only sales that are plausibly the SAME card as the FC lot.
+
+    Keyword search is loose: a query for Fossil Dragonite #19 returns Fossil
+    Dragonite #4 holo sales, Japanese results pollute English comps, and 1st
+    Edition/Unlimited get mixed. Wrong comps are worse than no comps, so the
+    filter is strict: subject name + card number + edition/shadowless/
+    language agreement all required.
+    """
+    from . import grading
+
+    q = ebay_query(fc_title).lower()
+    m = re.search(r"#(\d+)", q)
+    num = m.group(1).lstrip("0") or "0" if m else None
+    if m:
+        pre = q[:m.start()].split()
+        subject = pre[-1] if pre else None
+    else:
+        words = q.split()
+        subject = words[-1] if words else None
+    first_ed = "1st" in q
+    shadowless = "shadowless" in q
+    japanese = grading.detect_language(fc_title) == "JA"
+
+    out = []
+    for s in sales:
+        t = (s.get("title") or "").lower()
+        if subject and subject not in t:
+            continue
+        if num and not re.search(rf"(?<!\d){num}(?!\d)", t):
+            continue
+        if first_ed != ("1st" in t or "first ed" in t):
+            continue
+        if shadowless != ("shadowless" in t):
+            continue
+        if japanese != ("japanese" in t or "japan " in t):
+            continue
+        out.append(s)
+    return out
+
+
 def card_key(title):
     """Stable key for deduping the same card across lots. Lowercase, synonym-
     fixed, number-normalized, punctuation-stripped. Year excluded (unreliable)."""

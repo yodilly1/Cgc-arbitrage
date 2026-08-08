@@ -144,7 +144,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             if not quota_gone:      # a quota death is "not checked", not "0 sales"
                 comp_cache[key] = sales or []
         if comps_mode:
-            stats = scoring.summarize(comp_cache.get(key, []), lot["grade_class"])
+            same_card = normalize.comp_filter(lot["title"], comp_cache.get(key, []))
+            stats = scoring.summarize(same_card, lot["grade_class"])
             if stats:
                 archive.record_comp_stats(con, run_at, key, lot["grade_class"], stats)
 
