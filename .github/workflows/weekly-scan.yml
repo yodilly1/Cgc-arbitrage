@@ -1,8 +1,9 @@
 # Weekly FC -> eBay arbitrage scan.
 #
-# Runs twice around each Weekly Sunday Auction (closes Sunday ~7 PM PT):
+# Runs twice around each Weekly Sunday Auction (closes Sunday ~7 PM PT,
+# i.e. Mon 02:00-03:00 UTC):
 #   - Friday 11:00 UTC  : early look, time to research
-#   - Sunday 14:00 UTC  : final numbers ~5h before extended bidding
+#   - Sunday 22:00 UTC  : final numbers (~3 PM PT, ~4h before close)
 # Also runnable by hand from the Actions tab ("Run workflow").
 #
 # NOTE: GitHub only fires `schedule` triggers from the DEFAULT branch.
@@ -19,7 +20,7 @@ name: weekly-scan
 on:
   schedule:
     - cron: "0 11 * * 5"
-    - cron: "0 14 * * 0"
+    - cron: "0 22 * * 0"
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +35,9 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # First uncached run pulls ~600 live comps (~25s each) + FC history; give
+    # it room. Cached weekly runs finish in minutes. Max GitHub allows is 360.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +59,9 @@ jobs:
         run: python -m scanner.run_scan
 
       - name: Commit archive + report
+        # always(): even if the scan errored partway, the archived sales it
+        # DID fetch (the appreciating asset) are committed, not discarded.
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -89,6 +95,36 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: reports
+
+      - name: Alert on failure
+        # A silent failure leaves a non-technical operator with no signal and
+        # a stale Pages site. Email him that the run broke.
+        if: ${{ failure() && secrets.RESEND_API_KEY != '' && secrets.REPORT_EMAIL != '' }}
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL: ${{ secrets.REPORT_EMAIL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          body = ("This week's Fanatics scan did not complete. The last good "
+                  "report is still available, but this week's numbers may be "
+                  "missing or stale.\n\nRun log: " + os.environ["RUN_URL"])
+          req = urllib.request.Request(
+              "https://api.resend.com/emails",
+              data=json.dumps({
+                  "from": "FC Scanner <onboarding@resend.dev>",
+                  "to": [os.environ["REPORT_EMAIL"]],
+                  "subject": "⚠ Weekly Fanatics scan FAILED",
+                  "text": body,
+              }).encode(),
+              headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+                       "Content-Type": "application/json"})
+          try:
+              print(urllib.request.urlopen(req).status)
+          except Exception as e:
+              print("alert email failed:", e)
+          PY
 
   publish:
     # Publishes reports/ to GitHub Pages. Requires one-time setup:

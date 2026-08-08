@@ -10,7 +10,11 @@ import html
 import io
 from datetime import datetime, timezone, timedelta
 
-PT = timezone(timedelta(hours=-7))  # Pacific Daylight Time (auction closes stated in PT)
+try:
+    from zoneinfo import ZoneInfo
+    PT = ZoneInfo("America/Los_Angeles")   # DST-correct year-round
+except Exception:                           # zoneinfo/tzdata unavailable
+    PT = timezone(timedelta(hours=-7))
 
 CSV_COLUMNS = [
     "verdict", "title", "lot_string", "grade_class", "language", "product_line",
@@ -39,7 +43,7 @@ def _fmt_close(iso):
         return "—"
     try:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(PT)
-        return dt.strftime("%a %b %d, %I:%M %p PT")
+        return dt.strftime("%a %b %d, %I:%M %p %Z")
     except ValueError:
         return iso
 
@@ -57,8 +61,8 @@ def _row(s):
   <div class="sub">{html.escape(s.get('lot_string') or '')} · {html.escape(s.get('grade_class',''))}
   · {html.escape(s.get('language',''))} · bids: {s.get('bids') if s.get('bids') is not None else '—'}</div></td>
 <td class="num">{_fmt_money(s.get('current_total'))}</td>
-<td class="num max">{_fmt_money(s.get('max_bid_total'))}
-  <div class="sub">hammer {_fmt_money(s.get('max_bid_hammer'))}</div></td>
+<td class="num max">{_fmt_money(s.get('max_bid_hammer'))}
+  <div class="sub">${(s.get('max_bid_total') or 0):,.0f} w/ 20% BP</div></td>
 <td class="num">{_fmt_money(s.get('comp'))}
   <div class="sub">{html.escape(s.get('value_source') or '')} · {s.get('n_sales_90d', 0)} eBay/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div>
   {f'<div class="sub">FC clears {_fmt_money(s.get("fc_comp"))} ({s.get("fc_n_sales")}×){"" if s.get("win_likely", True) else " ⚠ above max"}</div>' if s.get('fc_comp') else ''}</td>
@@ -117,13 +121,13 @@ comps: {html.escape(comps_source or 'unavailable')} ·
 {len(actionable)} actionable / {len(scored_lots)} scanned</div>
 {f'<ul class="notes">{note_html}</ul>' if note_html else ''}
 <div class="wrap"><table>
-<tr><th></th><th>Card</th><th>Now (w/ BP)</th><th>Max bid (w/ BP)</th>
+<tr><th></th><th>Card</th><th>Now (w/ BP)</th><th>MAX BID (place this)</th>
 <th>Value (FMV)</th><th>Floor</th><th>Closes</th></tr>
 {rows}
 </table></div>
 <details><summary>Priced past max bid ({len(passed)})</summary>
 <div class="wrap"><table>
-<tr><th></th><th>Card</th><th>Now (w/ BP)</th><th>Max bid (w/ BP)</th>
+<tr><th></th><th>Card</th><th>Now (w/ BP)</th><th>MAX BID (place this)</th>
 <th>eBay comp</th><th>Floor</th><th>Closes</th></tr>{pass_rows}</table></div></details>
 <details><summary>Filtered out — illiquid / no comps ({len(rejected)})</summary>
 <div class="wrap"><table><tr><th>Card</th><th>Now</th><th>Why filtered</th></tr>
