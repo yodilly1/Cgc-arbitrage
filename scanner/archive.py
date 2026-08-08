@@ -45,6 +45,8 @@ def _migrate(con):
     cols = [r[1] for r in con.execute("PRAGMA table_info(ebay_sales)")]
     if "best_offer" not in cols:
         con.execute("ALTER TABLE ebay_sales ADD COLUMN best_offer INTEGER DEFAULT 0")
+    if "buying_format" not in cols:
+        con.execute("ALTER TABLE ebay_sales ADD COLUMN buying_format TEXT DEFAULT ''")
 
 
 def connect(path=None):
@@ -66,11 +68,12 @@ def archive_sales(con, query, sales, source="insights"):
     now = _now()
     for s in sales:
         con.execute(
-            "INSERT OR IGNORE INTO ebay_sales VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO ebay_sales VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (s["item_id"], query, s["title"], grading.classify_grade(s["title"]),
              s["price"], s.get("currency", "USD"), s["sold_date"],
              s.get("condition", ""), s.get("qty_sold", 1), s.get("bid_count"),
-             s.get("epid", ""), now, 1 if s.get("best_offer") else 0))
+             s.get("epid", ""), now, 1 if s.get("best_offer") else 0,
+             s.get("buying_format", "")))
     con.execute("INSERT OR REPLACE INTO sold_fetches VALUES (?,?,?,?)",
                 (query, source, now, len(sales)))
     con.commit()
@@ -96,11 +99,12 @@ def cached_sales(con, query, max_age_hours=132):
     out = []
     for r in con.execute(
             "SELECT item_id,title,price,currency,sold_date,condition,qty_sold,"
-            "bid_count,epid,best_offer FROM ebay_sales WHERE query=?", (query,)):
+            "bid_count,epid,best_offer,buying_format FROM ebay_sales WHERE query=?",
+            (query,)):
         out.append({"item_id": r[0], "title": r[1], "price": r[2],
                     "currency": r[3], "sold_date": r[4], "condition": r[5],
                     "qty_sold": r[6], "bid_count": r[7], "epid": r[8],
-                    "best_offer": bool(r[9])})
+                    "best_offer": bool(r[9]), "buying_format": r[10] or ""})
     return out
 
 

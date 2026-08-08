@@ -132,14 +132,52 @@ def comp_value(stats):
     return min(stats["last_3_avg"], stats["median"])
 
 
+DEFAULT_FC_RATIO = 0.85     # FC clears below eBay on average; refined per run
+
+
+def fc_calibration_ratio(pairs, default=DEFAULT_FC_RATIO):
+    """Median FC/eBay value ratio across cards priced in BOTH markets.
+
+    FC auctions systematically clear below eBay (that gap is the business),
+    so FC solds can't be averaged into eBay value raw — they must be
+    translated through this ratio first. Clamped: a ratio outside
+    [0.4, 1.2] means bad pairs, not a real market structure.
+    """
+    ratios = sorted(fc / eb for fc, eb in pairs if eb and fc)
+    if len(ratios) < 5:
+        return default
+    r = ratios[len(ratios) // 2]
+    return round(min(max(r, 0.4), 1.2), 3)
+
+
+def blended_value(ebay_stats, fc_stats, fc_ratio=DEFAULT_FC_RATIO):
+    """Fair market value ON THE EXIT MARKET (eBay), from both marketplaces.
+
+    eBay solds are direct evidence (weight 0.7). FC solds are translated to
+    eBay-equivalent via the calibration ratio (weight 0.3). FC-only pricing
+    is allowed but flagged — it proves value, not eBay sell-through.
+    Returns (value, source) where source is 'ebay+fc' | 'ebay' | 'fc_only'.
+    """
+    ebay_v = comp_value(ebay_stats) if ebay_stats else None
+    fc_v = min(fc_stats["last_3_avg"], fc_stats["median"]) if fc_stats else None
+    fc_implied = fc_v / fc_ratio if fc_v else None
+    if ebay_v and fc_implied:
+        return round(0.7 * ebay_v + 0.3 * fc_implied, 2), "ebay+fc"
+    if ebay_v:
+        return round(ebay_v, 2), "ebay"
+    if fc_implied:
+        return round(fc_implied, 2), "fc_only"
+    return None, None
+
+
 def score_lot(lot, stats, floor_price=None, active_supply=None,
               target_margin=TARGET_MARGIN, ad_rate=0.0, store=False,
-              fc_stats=None):
-    """Score one live FC lot against its eBay comp stats.
+              fc_stats=None, fc_ratio=DEFAULT_FC_RATIO):
+    """Score one live FC lot against its comps.
 
-    Returns a dict with verdict, max bid, and supporting numbers. `lot` is a
-    fanatics.parse_lot_html dict; `stats` a summarize() dict for the SAME
-    grade tier (or None).
+    Valuation: blended FMV from eBay solds + ratio-translated FC solds.
+    Liquidity: eBay velocity only — FC sales prove value, not eBay
+    sell-through, so FC-only pricing caps at WATCH.
     """
     out = {
         "uuid": lot["uuid"], "url": lot["url"], "title": lot["title"],
@@ -155,24 +193,32 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
                    fc_n_sales=fc_stats["n_sales"],
                    fc_last_sold=fc_stats["last_sold"])
 
-    if not stats:
-        out.update(verdict="NO_COMPS", velocity=DEAD, reason="no eBay sold data for this exact grade tier")
+    market, value_source = blended_value(stats, fc_stats, fc_ratio)
+    if market is None:
+        out.update(verdict="NO_COMPS", velocity=DEAD,
+                   reason="no sold data on either marketplace for this exact grade tier")
         return out
+    out["value_source"] = value_source
 
-    n = stats["n_sales_90d"]
-    vel = velocity_tier(n)
-    market = comp_value(stats)
-    conf = stats["confidence"]
-    out.update(velocity=vel, n_sales_90d=n, comp=market,
-               comp_median=stats["median"], comp_last3=stats["last_3_avg"],
-               last_sold=stats["last_sold"], confidence=conf)
-
-    if vel == DEAD:
-        out.update(verdict="REJECT", reason="0 sales in 90 days — dead inventory risk")
-        return out
-    if vel == ILLIQUID:
-        out.update(verdict="REJECT", reason=f"only {n} sale(s) in 90 days — illiquid")
-        return out
+    if stats:
+        n = stats["n_sales_90d"]
+        vel = velocity_tier(n)
+        conf = stats["confidence"]
+        out.update(velocity=vel, n_sales_90d=n, comp=market,
+                   ebay_comp=comp_value(stats),
+                   comp_median=stats["median"], comp_last3=stats["last_3_avg"],
+                   last_sold=stats["last_sold"], confidence=conf)
+        if vel == DEAD:
+            out.update(verdict="REJECT", reason="0 eBay sales in 90 days — dead inventory risk")
+            return out
+        if vel == ILLIQUID:
+            out.update(verdict="REJECT", reason=f"only {n} eBay sale(s) in 90 days — illiquid")
+            return out
+    else:
+        # FC-only valuation: eBay liquidity unproven, margin padded hard.
+        vel = None
+        conf = 0.35
+        out.update(velocity="UNKNOWN", n_sales_90d=0, comp=market, confidence=conf)
 
     # Low confidence widens the required margin rather than dropping the comp.
     required_margin = target_margin + (1.0 - conf) * 0.15
@@ -215,9 +261,14 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
 
     if headroom <= 0:
         out.update(verdict="PASS", reason="current price already above max bid")
+    elif vel is None:
+        out.update(verdict="WATCH",
+                   reason="FC comps only — eBay sell-through unverified")
     elif vel == SLOW:
+        n = out["n_sales_90d"]
         out.update(verdict="WATCH", reason=f"{n} sales/90d — slow mover, bid only well under max")
     else:
+        n = out["n_sales_90d"]
         out.update(verdict="BID", reason=f"liquid ({n} sales/90d), headroom ${headroom:,.0f}")
     return out
 

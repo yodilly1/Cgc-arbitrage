@@ -60,7 +60,7 @@ def _row(s):
 <td class="num max">{_fmt_money(s.get('max_bid_total'))}
   <div class="sub">hammer {_fmt_money(s.get('max_bid_hammer'))}</div></td>
 <td class="num">{_fmt_money(s.get('comp'))}
-  <div class="sub">{s.get('n_sales_90d', 0)} sold/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div>
+  <div class="sub">{html.escape(s.get('value_source') or '')} · {s.get('n_sales_90d', 0)} eBay/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div>
   {f'<div class="sub">FC clears {_fmt_money(s.get("fc_comp"))} ({s.get("fc_n_sales")}×){"" if s.get("win_likely", True) else " ⚠ above max"}</div>' if s.get('fc_comp') else ''}</td>
 <td class="num">{_fmt_money(s.get('floor'))}
   <div class="sub">{s.get('active_supply') if s.get('active_supply') is not None else '—'} listed{
@@ -118,7 +118,7 @@ comps: {html.escape(comps_source or 'unavailable')} ·
 {f'<ul class="notes">{note_html}</ul>' if note_html else ''}
 <div class="wrap"><table>
 <tr><th></th><th>Card</th><th>Now (w/ BP)</th><th>Max bid (w/ BP)</th>
-<th>eBay comp</th><th>Floor</th><th>Closes</th></tr>
+<th>Value (FMV)</th><th>Floor</th><th>Closes</th></tr>
 {rows}
 </table></div>
 <details><summary>Priced past max bid ({len(passed)})</summary>

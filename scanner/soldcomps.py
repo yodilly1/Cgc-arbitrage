@@ -98,5 +98,6 @@ class SoldCompsClient:
                 "bid_count": it.get("bidCount"),
                 "epid": it.get("epid") or "",
                 "best_offer": bool(it.get("bestOfferAccepted")),
+                "buying_format": it.get("buyingFormat") or "",
             })
         return out, None

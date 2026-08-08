@@ -252,6 +252,24 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             for key, active in ex.map(_fetch_floor, unique.items()):
                 floor_cache[key] = active
 
+    # FC -> eBay calibration ratio from cards priced in BOTH markets this run.
+    pairs, paired_keys = [], set()
+    for lot in live:
+        key = normalize.card_key(lot["title"])
+        fcst = fc_comps_by_key.get(key)
+        if not fcst or key in paired_keys or key not in comp_cache:
+            continue
+        st = scoring.summarize(
+            normalize.comp_filter(lot["title"], comp_cache[key]), lot["grade_class"])
+        if st:
+            paired_keys.add(key)
+            pairs.append((min(fcst["last_3_avg"], fcst["median"]),
+                          scoring.comp_value(st)))
+    fc_ratio = scoring.fc_calibration_ratio(pairs)
+    if pairs:
+        notes.append(f"FC→eBay calibration ratio {fc_ratio} "
+                     f"(from {len(pairs)} cards sold in both markets).")
+
     scored = []
     for lot in live:
         key = normalize.card_key(lot["title"])
@@ -272,7 +290,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
 
         s = scoring.score_lot(lot, stats, floor, supply,
                               target_margin=target_margin, ad_rate=ad_rate,
-                              store=store, fc_stats=fc_comps_by_key.get(key))
+                              store=store, fc_stats=fc_comps_by_key.get(key),
+                              fc_ratio=fc_ratio)
         no_comp_attempt = (not comps_mode) or key not in comp_cache
         if no_comp_attempt and s["verdict"] in ("NO_COMPS", "REJECT"):
             # We didn't look for comps — that's missing data, not a dead card.
