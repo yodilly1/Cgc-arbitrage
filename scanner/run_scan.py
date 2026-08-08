@@ -16,6 +16,7 @@ import sys
 import json
 import time
 import argparse
+import concurrent.futures
 from datetime import datetime, timezone
 
 from . import archive, ebay, fanatics, fees, normalize, report, scoring, soldcomps
@@ -104,69 +105,120 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
     # a mistake costs the most.
     live.sort(key=lambda l: -(l["price_incl_bp"] or 0))
     run_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    comp_cache, floor_cache = {}, {}
     quota_gone = False
+
+    # Unique cards, preserving the price-priority order.
+    unique = {}
+    for lot in live:
+        unique.setdefault(normalize.card_key(lot["title"]), lot["title"])
+
+    # Comp prefetch. SoldComps live-scrapes eBay (~25s/request), so a serial
+    # sweep of ~600 cards takes hours — run a small worker pool instead.
+    # Cache hits are resolved in the main thread; only real HTTP fans out.
+    comp_cache = {}
+
+    def _fetch_comps(title):
+        """Runs in a worker thread: HTTP only, no sqlite."""
+        client = soldcomps.SoldCompsClient() if comps_mode == "soldcomps" else ec
+        fetched = []            # (query, sales) pairs to archive in main thread
+        for q in normalize.query_variants(title):
+            if comps_mode == "soldcomps":
+                q = f"{q} CGC 10"
+                sales, err = client.sold(q)
+            else:
+                sales, err = client.sold(q, grader="CGC", grade="10")
+            if err:
+                return fetched, None, f"comp lookup error on '{q[:60]}': {err}"
+            fetched.append((q, sales or []))
+            if sales:
+                return fetched, sales, None
+            time.sleep(0.3)
+        return fetched, [], None
+
+    if comps_mode:
+        todo = {}
+        for key, title in unique.items():
+            sales = None
+            for q in normalize.query_variants(title):
+                cq = f"{q} CGC 10" if comps_mode == "soldcomps" else q
+                cached = archive.cached_sales(con, cq)
+                if cached:
+                    sales = cached
+                    break
+                if cached is not None:
+                    sales = []          # cached zero-result; keep trying variants
+                    continue
+                sales = None            # uncached variant -> needs a fetch
+                break
+            if sales is None:
+                todo[key] = title
+            else:
+                comp_cache[key] = sales
+        print(f"  comps: {len(comp_cache)} cached, {len(todo)} to fetch", flush=True)
+
+        workers = 4 if comps_mode == "soldcomps" else 2
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_fetch_comps, title): key
+                    for key, title in todo.items()}
+            done_n = 0
+            for fut in concurrent.futures.as_completed(futs):
+                key = futs[fut]
+                try:
+                    fetched, sales, err = fut.result()
+                except soldcomps.QuotaExhausted:
+                    if not quota_gone:
+                        quota_gone = True
+                        notes.append("SoldComps quota exhausted mid-scan — "
+                                     "uncovered lots are labeled NO_DATA.")
+                    for f in futs:
+                        f.cancel()
+                    continue
+                for q, s_rows in fetched:
+                    archive.archive_sales(con, q, s_rows, source=comps_mode)
+                if err and err not in notes:
+                    notes.append(err)
+                else:
+                    comp_cache[key] = sales or []
+                done_n += 1
+                if done_n % 25 == 0:
+                    print(f"  comps fetched {done_n}/{len(todo)}", flush=True)
+
+    # Floor prefetch (Browse is fast; a small pool still helps).
+    floor_cache = {}
+    if access["browse"]:
+        from . import grading
+
+        def _fetch_floor(item):
+            key, title = item
+            q = normalize.ebay_query(title) + " CGC 10"
+            active, _err = ec.active_listings(q)
+            return key, active or []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            for key, active in ex.map(_fetch_floor, unique.items()):
+                floor_cache[key] = active
+
     scored = []
     for lot in live:
         key = normalize.card_key(lot["title"])
         stats = floor = supply = None
 
-        if comps_mode and key not in comp_cache and not quota_gone:
-            sales = None
-            for q in normalize.query_variants(lot["title"]):
-                if comps_mode == "soldcomps":
-                    q = f"{q} CGC 10"
-                cached = archive.cached_sales(con, q)
-                if cached is not None:
-                    sales = cached
-                    if sales:
-                        break
-                    continue
-                try:
-                    if comps_mode == "insights":
-                        sales, err = ec.sold(q, grader="CGC", grade="10")
-                    else:
-                        sales, err = sc.sold(q)
-                except soldcomps.QuotaExhausted:
-                    quota_gone = True
-                    notes.append("SoldComps quota exhausted mid-scan — remaining "
-                                 "(cheaper) lots have no comps this run.")
-                    break
-                if err:
-                    notes_msg = f"comp lookup error on '{q[:60]}': {err}"
-                    if notes_msg not in notes:
-                        notes.append(notes_msg)
-                    break
-                archive.archive_sales(con, q, sales or [], source=comps_mode)
-                if sales:
-                    break
-                time.sleep(0.3)
-            if not quota_gone:      # a quota death is "not checked", not "0 sales"
-                comp_cache[key] = sales or []
-        if comps_mode:
-            same_card = normalize.comp_filter(lot["title"], comp_cache.get(key, []))
+        if comps_mode and key in comp_cache:
+            same_card = normalize.comp_filter(lot["title"], comp_cache[key])
             stats = scoring.summarize(same_card, lot["grade_class"])
             if stats:
                 archive.record_comp_stats(con, run_at, key, lot["grade_class"], stats)
 
         if access["browse"]:
-            if key not in floor_cache:
-                q = normalize.ebay_query(lot["title"]) + " CGC 10"
-                active, _err = ec.active_listings(q)
-                if active:
-                    from . import grading
-                    same = [a["price"] for a in active
-                            if grading.classify_grade(a["title"]) == lot["grade_class"]]
-                    floor_cache[key] = (min(same), len(same)) if same else (None, 0)
-                else:
-                    floor_cache[key] = (None, None)
-                time.sleep(0.3)
-            floor, supply = floor_cache[key]
+            active = floor_cache.get(key) or []
+            same = [a["price"] for a in active
+                    if grading.classify_grade(a["title"]) == lot["grade_class"]]
+            floor = min(same) if same else None
+            supply = len(same) if active else None
 
         s = scoring.score_lot(lot, stats, floor, supply,
                               target_margin=target_margin, ad_rate=ad_rate, store=store)
-        no_comp_attempt = (not comps_mode) or \
-            (quota_gone and key not in comp_cache)
+        no_comp_attempt = (not comps_mode) or key not in comp_cache
         if no_comp_attempt and s["verdict"] in ("NO_COMPS", "REJECT"):
             # We didn't look for comps — that's missing data, not a dead card.
             s["verdict"] = "NO_DATA"
