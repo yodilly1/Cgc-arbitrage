@@ -18,7 +18,7 @@ import time
 import argparse
 from datetime import datetime, timezone
 
-from . import archive, ebay, fanatics, normalize, report, scoring
+from . import archive, ebay, fanatics, fees, normalize, report, scoring
 
 
 def check_access():
@@ -145,6 +145,12 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
             s["reason"] = "no sold-comp source configured"
             s["floor"] = floor
             s["active_supply"] = supply
+            # Floor-based signal only (asking price, NOT market value): what
+            # you'd net listing 3% under the cheapest competing BIN, vs cost.
+            if floor and s.get("current_total"):
+                net_uc = fees.ebay_net_proceeds(floor * 0.97)
+                s["net_if_undercut_floor"] = round(net_uc, 2)
+                s["floor_gap_pct"] = round((net_uc / s["current_total"] - 1) * 100, 1)
         scored.append(s)
     con.commit()
 

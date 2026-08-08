@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 HOST = "https://api.ebay.com"          # sandbox is useless here: fake data
-OAUTH_URL = f"{HOST}/identity/oauth2/token"
+OAUTH_URL = f"{HOST}/identity/v1/oauth2/token"
 INSIGHTS_URL = f"{HOST}/buy/marketplace_insights/v1_beta/item_sales/search"
 BROWSE_URL = f"{HOST}/buy/browse/v1/item_summary/search"
 TAXONOMY_URL = f"{HOST}/commerce/taxonomy/v1"

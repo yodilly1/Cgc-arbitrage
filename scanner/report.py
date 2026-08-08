@@ -61,7 +61,9 @@ def _row(s):
 <td class="num">{_fmt_money(s.get('comp'))}
   <div class="sub">{s.get('n_sales_90d', 0)} sold/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div></td>
 <td class="num">{_fmt_money(s.get('floor'))}
-  <div class="sub">{s.get('active_supply') if s.get('active_supply') is not None else '—'} listed</div></td>
+  <div class="sub">{s.get('active_supply') if s.get('active_supply') is not None else '—'} listed{
+    (' · undercut nets ' + ('+' if s['floor_gap_pct'] >= 0 else '') + format(s['floor_gap_pct'], '.0f') + '%')
+    if s.get('floor_gap_pct') is not None else ''}</div></td>
 <td>{_fmt_close(s.get('auction_ends_at'))}</td>
 </tr>"""
 

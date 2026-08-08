@@ -165,7 +165,9 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
 
 
 def rank_key(scored):
-    """Sort: BID first, then WATCH; within a verdict by headroom x confidence."""
-    order = {"BID": 0, "WATCH": 1, "PASS": 2, "REJECT": 3, "NO_COMPS": 4}
-    return (order.get(scored.get("verdict"), 5),
-            -(scored.get("headroom") or 0) * (scored.get("confidence") or 0))
+    """Sort: BID first, then WATCH, then floor-only rows; within a verdict by
+    headroom x confidence (comp mode) or floor gap (floor-only mode)."""
+    order = {"BID": 0, "WATCH": 1, "NO_DATA": 2, "PASS": 3, "REJECT": 4, "NO_COMPS": 5}
+    signal = (scored.get("headroom") or 0) * (scored.get("confidence") or 0) \
+        + (scored.get("floor_gap_pct") or 0)
+    return (order.get(scored.get("verdict"), 6), -signal)
