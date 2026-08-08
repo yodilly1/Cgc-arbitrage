@@ -76,9 +76,14 @@ lot pages (server-rendered)              structured prefetchedItemData JSON:
         │                                hammer price, auction close, lot #,
         │                                + page-title verification (slugs lie)
         ▼
-eBay Marketplace Insights (sold, 90d)    aspect_filter Professional Grader/Grade
-        │  → Pristine / Gem Mint / Unspecified kept STRICTLY separate
-        │  → every raw sale archived to data/archive.sqlite forever
+eBay sold comps (Insights or SoldComps)  strict same-card filter (number,
+        │                                edition, language); Pristine / Gem
+        │                                Mint / Unspecified NEVER pooled;
+        │                                every raw sale archived forever
+        ▼
+FC sales-history comps (own sitemaps)    what the card clears for ON FC —
+        │                                acquisition-market comp + win-odds
+        │                                check against the max bid
         ▼
 VELOCITY GATE (the whole game)           0 sales/90d → REJECT, 1–2 → REJECT,
         │                                3–5 → WATCH, 6+ → BID-eligible

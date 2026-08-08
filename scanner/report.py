@@ -16,6 +16,7 @@ CSV_COLUMNS = [
     "verdict", "title", "lot_string", "grade_class", "language", "product_line",
     "current_total", "max_bid_total", "max_bid_hammer", "headroom",
     "comp", "n_sales_90d", "last_sold", "confidence",
+    "fc_comp", "fc_n_sales", "fc_last_sold", "win_likely",
     "floor", "active_supply", "bids", "auction_ends_at", "url", "reason",
 ]
 
@@ -59,7 +60,8 @@ def _row(s):
 <td class="num max">{_fmt_money(s.get('max_bid_total'))}
   <div class="sub">hammer {_fmt_money(s.get('max_bid_hammer'))}</div></td>
 <td class="num">{_fmt_money(s.get('comp'))}
-  <div class="sub">{s.get('n_sales_90d', 0)} sold/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div></td>
+  <div class="sub">{s.get('n_sales_90d', 0)} sold/90d{(' · conf ' + format(conf, '.2f')) if conf is not None else ''}</div>
+  {f'<div class="sub">FC clears {_fmt_money(s.get("fc_comp"))} ({s.get("fc_n_sales")}×){"" if s.get("win_likely", True) else " ⚠ above max"}</div>' if s.get('fc_comp') else ''}</td>
 <td class="num">{_fmt_money(s.get('floor'))}
   <div class="sub">{s.get('active_supply') if s.get('active_supply') is not None else '—'} listed{
     (' · undercut nets ' + ('+' if s['floor_gap_pct'] >= 0 else '') + format(s['floor_gap_pct'], '.0f') + '%')

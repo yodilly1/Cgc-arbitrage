@@ -39,7 +39,8 @@ def check_access():
 
 
 def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
-         ad_rate=0.0, store=False, skip_ebay=False, max_year=2009):
+         ad_rate=0.0, store=False, skip_ebay=False, max_year=2009,
+         fc_history_cap=300):
     con = archive.connect(db_path)
     fc = fanatics.FanaticsClient()
     ec = ebay.EbayClient()
@@ -99,6 +100,59 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             and (l["year"] is None or l["year"] <= max_year)]
     auction_name = next((l["auction_name"] for l in live if l["auction_name"]), "")
     print(f"  {len(live)} live in-scope lots ({errors} fetch errors)")
+
+    # ---- 2b. Fanatics own comps (sales-history sitemaps) -------------------
+    # What each card actually clears for ON FC — the acquisition-market comp
+    # (alt.xyz-style multi-marketplace view). Archived permanently; coverage
+    # compounds every run. Bounded per run to keep scraping polite.
+    fc_comps_by_key = {}
+    if fc_history_cap > 0:
+        try:
+            print("Indexing FC sales history ...", flush=True)
+            hist_index = {}
+            for u in fc.history_lot_urls():
+                slug = u.rstrip("/").split("/")[-1].lower()
+                if "pokemon" in slug and fanatics.slug_is_cgc10(u):
+                    hist_index.setdefault(fanatics.slug_card_key(u), []).append(u)
+            known = archive.known_uuids(con)
+            fetch_list, seen_urls = [], set()
+            for lot in sorted(live, key=lambda l: -(l["price_incl_bp"] or 0)):
+                for u in hist_index.get(fanatics.slug_card_key(lot["url"]), []):
+                    if u.rstrip("/").split("/")[-2] not in known and u not in seen_urls:
+                        seen_urls.add(u)
+                        fetch_list.append(u)
+            fetch_list = fetch_list[:fc_history_cap]
+            print(f"  {len(fetch_list)} closed FC lots to fetch "
+                  f"(cap {fc_history_cap})", flush=True)
+
+            def _fetch_hist(u):
+                return fanatics.FanaticsClient(min_interval=1.5).fetch_lot(u)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+                for i, (hlot, herr) in enumerate(ex.map(_fetch_hist, fetch_list), 1):
+                    if hlot and hlot["is_closed"]:
+                        archive.archive_lot(con, hlot)
+                    if i % 50 == 0:
+                        con.commit()
+                        print(f"  history fetched {i}/{len(fetch_list)}", flush=True)
+            con.commit()
+
+            # Build per-card FC comp stats from EVERYTHING archived, with the
+            # same same-card title verification used for eBay comps.
+            pool = {}
+            for row in archive.closed_cgc10_pokemon(con):
+                pool.setdefault(fanatics.slug_card_key(row["url"]), []).append(row)
+            for lot in live:
+                k = fanatics.slug_card_key(lot["url"])
+                cands = [r for r in pool.get(k, [])
+                         if r["grade_class"] == lot["grade_class"]
+                         and normalize.comp_filter(lot["title"], [{"title": r["title"]}])]
+                st = scoring.fc_summarize(cands)
+                if st:
+                    fc_comps_by_key[normalize.card_key(lot["title"])] = st
+            print(f"  FC comps available for {len(fc_comps_by_key)} cards", flush=True)
+        except Exception as e:  # noqa: BLE001 - FC comps are additive, not critical
+            notes.append(f"FC sales-history comps unavailable this run: {e}")
 
     # ---- 2-4. comps / velocity / floor ------------------------------------
     # Most expensive lots first, so a capped comp quota covers the lots where
@@ -217,7 +271,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             supply = len(same) if active else None
 
         s = scoring.score_lot(lot, stats, floor, supply,
-                              target_margin=target_margin, ad_rate=ad_rate, store=store)
+                              target_margin=target_margin, ad_rate=ad_rate,
+                              store=store, fc_stats=fc_comps_by_key.get(key))
         no_comp_attempt = (not comps_mode) or key not in comp_cache
         if no_comp_attempt and s["verdict"] in ("NO_COMPS", "REJECT"):
             # We didn't look for comps — that's missing data, not a dead card.
@@ -271,6 +326,8 @@ def main(argv=None):
     ap.add_argument("--ad-rate", type=float, default=0.0, help="promoted listings rate")
     ap.add_argument("--store", action="store_true", help="eBay Basic Store fee schedule")
     ap.add_argument("--max-year", type=int, default=2009)
+    ap.add_argument("--fc-history-cap", type=int, default=300,
+                    help="max closed FC lots to fetch per run for FC comps (0 disables)")
     args = ap.parse_args(argv)
 
     if args.check_access:
@@ -279,7 +336,8 @@ def main(argv=None):
 
     scan(max_lots=args.max_lots, db_path=args.db, out_dir=args.out,
          target_margin=args.margin, ad_rate=args.ad_rate, store=args.store,
-         skip_ebay=args.skip_ebay, max_year=args.max_year)
+         skip_ebay=args.skip_ebay, max_year=args.max_year,
+         fc_history_cap=args.fc_history_cap)
     return 0
 
 

@@ -81,3 +81,30 @@ def test_comp_value_is_conservative():
     # Best-Offer bias skews sold averages HIGH -> take the lower of last3/median
     stats = {"last_3_avg": 600.0, "median": 500.0}
     assert scoring.comp_value(stats) == 500.0
+
+
+def test_fc_summarize_and_win_likely():
+    closed = [
+        {"price_incl_bp": 120.0, "sold_date": "Feb 28, 2026"},
+        {"price_incl_bp": 100.0, "sold_date": "Jan 10, 2026"},
+        {"price_incl_bp": 140.0, "sold_date": "Mar 05, 2026"},
+    ]
+    st = scoring.fc_summarize(closed)
+    assert st["n_sales"] == 3
+    assert st["median"] == 120.0
+    assert st["last_sold"] == "2026-03-05"
+
+    sales = _sales([(500, f"2026-0{m}-01T00:00:00Z") for m in range(1, 9)])
+    stats = scoring.summarize(sales, "CGC10_GEM")
+    s = scoring.score_lot(_lot(total=120.0), stats, fc_stats=st)
+    assert s["fc_comp"] == 120.0
+    assert s["win_likely"] is True          # FC clears $120, max bid is higher
+
+    exp = scoring.fc_summarize([{"price_incl_bp": 9000.0, "sold_date": "Mar 01, 2026"}])
+    s2 = scoring.score_lot(_lot(total=120.0), stats, fc_stats=exp)
+    assert s2["win_likely"] is False        # FC always clears above max bid
+
+
+def test_fc_summarize_empty():
+    assert scoring.fc_summarize([]) is None
+    assert scoring.fc_summarize([{"price_incl_bp": None, "sold_date": None}]) is None

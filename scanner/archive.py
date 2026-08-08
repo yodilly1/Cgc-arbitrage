@@ -125,6 +125,22 @@ def record_comp_stats(con, run_at, card_key, grade_class, stats):
                 (run_at, card_key, grade_class, json.dumps(stats)))
 
 
+def closed_cgc10_pokemon(con):
+    """All archived CLOSED CGC 10 Pokemon lots — the FC comp pool."""
+    out = []
+    for r in con.execute(
+            "SELECT url,title,grade_class,price_incl_bp,sold_date FROM fc_lots "
+            "WHERE is_closed=1 AND grade_class LIKE 'CGC10%'"):
+        d = dict(zip(["url", "title", "grade_class", "price_incl_bp", "sold_date"], r))
+        if grading.is_pokemon(d["title"]):
+            out.append(d)
+    return out
+
+
+def known_uuids(con):
+    return {r[0] for r in con.execute("SELECT uuid FROM fc_lots")}
+
+
 def cached_lot(con, uuid, max_age_hours=6):
     """Reuse an archived lot row: closed lots never change (no TTL); active
     lots are reusable within `max_age_hours` (bids move, but not enough to

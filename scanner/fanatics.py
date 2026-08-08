@@ -72,10 +72,16 @@ class FanaticsClient:
         return [u for u in _LOC_RE.findall(r.text)
                 if re.search(r"/sitemap/weekly-auction-\d+\.xml\.gz$", u)]
 
-    def lot_urls(self):
-        """All lot URLs in the current weekly auction sitemaps."""
+    def history_sitemap_urls(self):
+        """sales-history-weekly-auction-*.xml.gz — every closed weekly lot."""
+        r = self._get(SITEMAP_INDEX)
+        r.raise_for_status()
+        return [u for u in _LOC_RE.findall(r.text)
+                if re.search(r"/sitemap/sales-history-weekly-auction-\d+\.xml\.gz$", u)]
+
+    def _sitemap_lot_urls(self, sitemaps):
         urls = []
-        for sm in self.weekly_sitemap_urls():
+        for sm in sitemaps:
             r = self._get(sm, timeout=90)
             r.raise_for_status()
             body = r.content
@@ -83,6 +89,15 @@ class FanaticsClient:
                 body = gzip.decompress(body)
             urls.extend(_LOC_RE.findall(body.decode("utf-8", "replace")))
         return urls
+
+    def lot_urls(self):
+        """All lot URLs in the current weekly auction sitemaps."""
+        return self._sitemap_lot_urls(self.weekly_sitemap_urls())
+
+    def history_lot_urls(self):
+        """All closed-lot URLs across the sales-history sitemaps (millions;
+        callers slug-filter before fetching pages)."""
+        return self._sitemap_lot_urls(self.history_sitemap_urls())
 
     # ------------------------------------------------------------ lot pages
 
@@ -210,6 +225,31 @@ def parse_lot_html(html, url):
         "product_line": grading.detect_product_line(title),
         "is_pokemon": grading.is_pokemon(title),
     }
+
+
+# ------------------------------------------------------------- slug matching
+
+_SLUG_GRADE_RE = re.compile(r"-(cgc|psa|bgs|sgc)-.*$")
+_SLUG_YEAR_RE = re.compile(r"^(19|20)\d\d-")
+
+
+def slug_card_key(url):
+    """Card identity key derived from an FC slug, grade/year stripped.
+
+    Both live and historical URLs use FC's own slug vocabulary, so matching
+    history to live lots on this key is self-consistent (unlike matching FC
+    text to eBay text). Slugs are occasionally recycled (trap #2) — always
+    verify the fetched page's parsed title before trusting a match.
+    """
+    slug = url.rstrip("/").split("/")[-1].lower()
+    slug = _SLUG_YEAR_RE.sub("", slug)
+    slug = _SLUG_GRADE_RE.sub("", slug)
+    return slug.strip("-")
+
+
+def slug_is_cgc10(url):
+    slug = url.rstrip("/").split("/")[-1].lower()
+    return "cgc-10" in slug or "cgc-pristine-10" in slug
 
 
 # ------------------------------------------------------------ slug prefilter

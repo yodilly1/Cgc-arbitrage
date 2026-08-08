@@ -88,6 +88,40 @@ def confidence(n, last_sold_iso, cv):
     return round(0.45 * n_score + 0.35 * rec_score + 0.20 * disp_score, 2)
 
 
+def fc_summarize(closed_lots):
+    """Stats over Fanatics' OWN sold totals (incl. 20% BP) for one card+tier.
+
+    This is the acquisition-market comp: what the card actually clears for
+    on FC. eBay remains the valuation basis (it's the exit market); the FC
+    comp calibrates what winning will probably cost.
+    """
+    rows = []
+    for l in closed_lots:
+        total = l.get("price_incl_bp")
+        if not total:
+            continue
+        d = ""
+        if l.get("sold_date"):
+            try:
+                d = datetime.strptime(l["sold_date"], "%b %d, %Y").date().isoformat()
+            except ValueError:
+                pass
+        rows.append((d, float(total)))
+    if not rows:
+        return None
+    rows.sort(reverse=True)
+    totals = sorted(t for _, t in rows)
+    n = len(totals)
+    median = totals[n // 2] if n % 2 else (totals[n // 2 - 1] + totals[n // 2]) / 2
+    recent = [t for _, t in rows[:3]]
+    return {
+        "n_sales": n,
+        "median": round(median, 2),
+        "last_3_avg": round(sum(recent) / len(recent), 2),
+        "last_sold": rows[0][0],
+    }
+
+
 def comp_value(stats):
     """Market value estimate: blend of recent sales and 90d median.
 
@@ -99,7 +133,8 @@ def comp_value(stats):
 
 
 def score_lot(lot, stats, floor_price=None, active_supply=None,
-              target_margin=TARGET_MARGIN, ad_rate=0.0, store=False):
+              target_margin=TARGET_MARGIN, ad_rate=0.0, store=False,
+              fc_stats=None):
     """Score one live FC lot against its eBay comp stats.
 
     Returns a dict with verdict, max bid, and supporting numbers. `lot` is a
@@ -114,6 +149,11 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
         "current_total": lot["price_incl_bp"], "current_hammer": lot["hammer"],
         "auction_ends_at": lot["auction_ends_at"],
     }
+
+    if fc_stats:
+        out.update(fc_comp=min(fc_stats["last_3_avg"], fc_stats["median"]),
+                   fc_n_sales=fc_stats["n_sales"],
+                   fc_last_sold=fc_stats["last_sold"])
 
     if not stats:
         out.update(verdict="NO_COMPS", velocity=DEAD, reason="no eBay sold data for this exact grade tier")
@@ -167,6 +207,11 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
             net_if_undercut_floor=round(net_uc, 2),
             exit_ok=bool(all_in) and net_uc >= all_in * 1.10,
         )
+
+    # Acquisition odds: if this card's typical FC clearing price is above
+    # the max bid, winning at a profitable price is unlikely.
+    if out.get("fc_comp"):
+        out["win_likely"] = out["fc_comp"] <= max_total
 
     if headroom <= 0:
         out.update(verdict="PASS", reason="current price already above max bid")
