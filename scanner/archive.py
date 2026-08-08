@@ -8,7 +8,7 @@ week 52 of running this gives 15 months of comps nobody can sell you.
 import os
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from . import grading
 
@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS comp_stats(
     PRIMARY KEY (run_at, card_key, grade_class));
 CREATE TABLE IF NOT EXISTS sold_fetches(
     query TEXT PRIMARY KEY, source TEXT, fetched_at TEXT, n_results INTEGER);
+CREATE TABLE IF NOT EXISTS sale_queries(
+    query TEXT, item_id TEXT, PRIMARY KEY (query, item_id));
 """
 
 
@@ -47,6 +49,14 @@ def _migrate(con):
         con.execute("ALTER TABLE ebay_sales ADD COLUMN best_offer INTEGER DEFAULT 0")
     if "buying_format" not in cols:
         con.execute("ALTER TABLE ebay_sales ADD COLUMN buying_format TEXT DEFAULT ''")
+    # Backfill sale_queries from the per-row query column so the existing
+    # archive keeps its query membership (H4) without re-spending quota.
+    has_sq = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='sale_queries'"
+    ).fetchone()
+    if has_sq and not con.execute("SELECT 1 FROM sale_queries LIMIT 1").fetchone():
+        con.execute("INSERT OR IGNORE INTO sale_queries(query, item_id) "
+                    "SELECT query, item_id FROM ebay_sales WHERE query IS NOT NULL")
 
 
 def connect(path=None):
@@ -74,17 +84,26 @@ def archive_sales(con, query, sales, source="insights"):
              s.get("condition", ""), s.get("qty_sold", 1), s.get("bid_count"),
              s.get("epid", ""), now, 1 if s.get("best_offer") else 0,
              s.get("buying_format", "")))
+        # Track query membership separately so a sale first seen under another
+        # query is still returned for THIS query on cache replay (H4).
+        con.execute("INSERT OR IGNORE INTO sale_queries VALUES (?,?)",
+                    (query, s["item_id"]))
     con.execute("INSERT OR REPLACE INTO sold_fetches VALUES (?,?,?,?)",
                 (query, source, now, len(sales)))
     con.commit()
 
 
-def cached_sales(con, query, max_age_hours=132):
+def cached_sales(con, query, max_age_hours=132, window_days=90):
     """Return archived sales for a query fetched within the TTL, else None.
 
     Default TTL (5.5 days) means the Friday scan's paid API calls are reused
     by Sunday's scan, but next week refetches. Keeps trial/monthly quota from
     being spent twice on the same card in one auction cycle.
+
+    Only sales within `window_days` are returned: the archive grows without
+    bound, but the velocity gate must never see stale rows (C2). Rows are
+    gathered through sale_queries, so an item first archived under a
+    different query is still returned here (H4).
     """
     row = con.execute("SELECT fetched_at FROM sold_fetches WHERE query=?",
                       (query,)).fetchone()
@@ -96,11 +115,13 @@ def cached_sales(con, query, max_age_hours=132):
         return None
     if age.total_seconds() > max_age_hours * 3600:
         return None
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
     out = []
     for r in con.execute(
-            "SELECT item_id,title,price,currency,sold_date,condition,qty_sold,"
-            "bid_count,epid,best_offer,buying_format FROM ebay_sales WHERE query=?",
-            (query,)):
+            "SELECT e.item_id,e.title,e.price,e.currency,e.sold_date,e.condition,"
+            "e.qty_sold,e.bid_count,e.epid,e.best_offer,e.buying_format "
+            "FROM ebay_sales e JOIN sale_queries q ON e.item_id=q.item_id "
+            "WHERE q.query=? AND e.sold_date >= ?", (query, cutoff)):
         out.append({"item_id": r[0], "title": r[1], "price": r[2],
                     "currency": r[3], "sold_date": r[4], "condition": r[5],
                     "qty_sold": r[6], "bid_count": r[7], "epid": r[8],

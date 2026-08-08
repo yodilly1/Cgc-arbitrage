@@ -16,8 +16,11 @@ OTHER = "OTHER"
 
 _PRISTINE_RE = re.compile(r"\b(pristine|p10|10\s*pristine|pristine\s*10)\b", re.I)
 _GEM_RE = re.compile(r"\b(gem\s*mint|gem)\b", re.I)
-_CGC10_RE = re.compile(r"\bCGC\s*(?:pristine\s*)?10\b", re.I)
-_PSA10_RE = re.compile(r"\bPSA\s*10\b", re.I)
+# Both word orders are common on eBay: "CGC 10 Gem Mint" AND "CGC Gem Mint 10".
+# Requiring the number right after CGC threw away most real comps.
+_CGC10_RE = re.compile(
+    r"\bCGC\s*(?:gem\s*(?:mint|mt)|pristine|perfect)?\s*10(?!\.?\d)", re.I)
+_PSA10_RE = re.compile(r"\bPSA\s*(?:gem\s*(?:mint|mt)\s*)?10(?!\.?\d)", re.I)
 
 
 def classify_grade(title):

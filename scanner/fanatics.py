@@ -22,6 +22,7 @@ import re
 import gzip
 import json
 import time
+import threading
 
 import requests
 
@@ -44,13 +45,20 @@ class FanaticsClient:
         self.s.headers["User-Agent"] = USER_AGENT
         self.min_interval = min_interval
         self._last = 0.0
+        self._lock = threading.Lock()       # shared instance across a pool
 
-    def _get(self, url, timeout=30, retries=3):
-        for attempt in range(retries):
+    def _throttle(self):
+        # Serialize the spacing so N pool workers don't all fire at once
+        # (Cloudflare ban risk takes down the whole pipeline, not one call).
+        with self._lock:
             wait = self.min_interval - (time.monotonic() - self._last)
             if wait > 0:
                 time.sleep(wait)
             self._last = time.monotonic()
+
+    def _get(self, url, timeout=30, retries=3):
+        for attempt in range(retries):
+            self._throttle()
             try:
                 r = self.s.get(url, timeout=timeout)
             except requests.RequestException:

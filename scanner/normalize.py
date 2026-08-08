@@ -63,7 +63,7 @@ def comp_filter(fc_title, sales):
 
     q = ebay_query(fc_title).lower()
     m = re.search(r"#(\d+)", q)
-    num = m.group(1).lstrip("0") or "0" if m else None
+    num = (m.group(1).lstrip("0") or "0") if m else None
     if m:
         pre = q[:m.start()].split()
         subject = pre[-1] if pre else None
@@ -75,21 +75,28 @@ def comp_filter(fc_title, sales):
     error_var = "error" in q
     japanese = grading.detect_language(fc_title) == "JA"
 
+    # Grade tokens must not leak into card-number matching: "CGC 10" would
+    # satisfy a #10 (or #1) card-number check on EVERY comp title.
+    _grade_tokens = re.compile(r"\b(cgc|psa|bgs|sgc)\b[^0-9]*\d+(\.\d+)?", re.I)
+
     out = []
     for s in sales:
         t = (s.get("title") or "").lower()
-        if subject and subject not in t:
-            continue
-        if num and not re.search(rf"(?<!\d){num}(?!\d)", t):
-            continue
+        if subject and not re.search(rf"\b{re.escape(subject)}\b", t):
+            continue                        # word boundary: 'mew' != 'mewtwo'
+        if num:
+            t_nograde = _grade_tokens.sub(" ", t)
+            # allow zero-padding both ways: #6 matches '#006' and vice versa
+            if not re.search(rf"(?<!\d)0*{num}(?!\d)", t_nograde):
+                continue
         if first_ed != ("1st" in t or "first ed" in t):
             continue
         if shadowless != ("shadowless" in t):
             continue
         if error_var != ("error" in t):     # error variants price differently
             continue
-        if japanese != ("japanese" in t or "japan " in t):
-            continue
+        if japanese != (grading.detect_language(t) == "JA"):
+            continue                        # symmetric: set-name hints count on both sides
         out.append(s)
     return out
 

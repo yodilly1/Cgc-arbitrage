@@ -66,7 +66,12 @@ class SoldCompsClient:
                     return None, f"request failed: {e}"
                 time.sleep(2 ** attempt * 2)
                 continue
-            if r.status_code == 403:
+            if r.status_code in (401, 403):
+                body = (r.text or "").lower()
+                # A revoked/rotated key also 403s; don't mislabel it as quota
+                # (which would silently produce an all-NO_DATA sheet forever).
+                if r.status_code == 401 or "quota" not in body and "limit" not in body:
+                    return None, f"AUTH {r.status_code}: check SOLDCOMPS_API_KEY ({r.text[:120]})"
                 raise QuotaExhausted(r.text[:200])
             if r.status_code == 429 and attempt < retries - 1:
                 time.sleep(2 ** attempt * 10)

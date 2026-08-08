@@ -125,8 +125,12 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             print(f"  {len(fetch_list)} closed FC lots to fetch "
                   f"(cap {fc_history_cap})", flush=True)
 
+            # One shared, thread-safe client so the 3 workers stay within a
+            # combined polite rate rather than 3x-hammering Cloudflare (M2).
+            hist_client = fanatics.FanaticsClient(min_interval=0.6)
+
             def _fetch_hist(u):
-                return fanatics.FanaticsClient(min_interval=1.5).fetch_lot(u)
+                return hist_client.fetch_lot(u)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
                 for i, (hlot, herr) in enumerate(ex.map(_fetch_hist, fetch_list), 1):
@@ -220,6 +224,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
             done_n = 0
             for fut in concurrent.futures.as_completed(futs):
                 key = futs[fut]
+                if fut.cancelled():          # cancelled by an earlier quota hit
+                    continue
                 try:
                     fetched, sales, err = fut.result()
                 except soldcomps.QuotaExhausted:
@@ -229,6 +235,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
                                      "uncovered lots are labeled NO_DATA.")
                     for f in futs:
                         f.cancel()
+                    continue
+                except concurrent.futures.CancelledError:
                     continue
                 for q, s_rows in fetched:
                     archive.archive_sales(con, q, s_rows, source=comps_mode)
@@ -286,7 +294,10 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
 
         if access["browse"]:
             active = floor_cache.get(key) or []
-            same = [a["price"] for a in active
+            # Same-card filter (H5): a keyword floor can be a DIFFERENT cheap
+            # CGC 10, producing a false-low floor that wrongly kills a buy.
+            same_active = normalize.comp_filter(lot["title"], active)
+            same = [a["price"] for a in same_active
                     if grading.classify_grade(a["title"]) == lot["grade_class"]]
             floor = min(same) if same else None
             supply = len(same) if active else None

@@ -32,3 +32,12 @@ def test_bandai_flagged_as_non_tcg():
 def test_year_extraction():
     assert grading.extract_year("1999 Pokemon Base Set Charizard") == 1999
     assert grading.extract_year("Pokemon Promo Mew") is None
+
+
+def test_cgc_gem_mint_10_word_order():
+    # H1: "CGC Gem Mint 10" (number after words) must classify, not fall to OTHER
+    assert grading.classify_grade("Zubat Fossil 1st Edition CGC GEM MINT 10") == grading.CGC10_GEM
+    assert grading.classify_grade("Charizard CGC Pristine 10") == grading.CGC10_PRISTINE
+    assert grading.classify_grade("Pikachu CGC 10 Gem Mint") == grading.CGC10_GEM
+    # must not match CGC 10 inside a 9.5 or 10.5
+    assert grading.classify_grade("Charizard CGC 9.5") == grading.OTHER

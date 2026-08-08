@@ -34,12 +34,24 @@ def test_maps_response_to_sale_dicts():
 
 def test_quota_exhausted_raises():
     c = soldcomps.SoldCompsClient(api_key="sc_test")
-    with mock.patch("scanner.soldcomps.requests.get", return_value=_resp(403)):
+    r = _resp(403)
+    r.text = "Monthly quota exceeded"
+    with mock.patch("scanner.soldcomps.requests.get", return_value=r):
         try:
             c.sold("x")
             assert False, "expected QuotaExhausted"
         except soldcomps.QuotaExhausted:
             pass
+
+
+def test_revoked_key_is_auth_error_not_quota():
+    # M7: a 401/403 without a quota message must NOT be mislabeled as quota
+    c = soldcomps.SoldCompsClient(api_key="sc_bad")
+    r = _resp(401)
+    r.text = "Invalid API key"
+    with mock.patch("scanner.soldcomps.requests.get", return_value=r):
+        sales, err = c.sold("x")
+    assert sales is None and "AUTH" in err
 
 
 def test_old_sales_dropped():

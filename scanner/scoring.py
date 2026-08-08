@@ -9,7 +9,7 @@ Non-negotiable rules (docs/BRIEF.md §6):
     required safety margin instead of being discarded.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from . import fees, grading
 
@@ -33,15 +33,21 @@ def velocity_tier(n_sales):
     return LIQUID
 
 
-def summarize(sales, tier):
+def summarize(sales, tier, window_days=90):
     """Trimmed, recency-ordered stats for one grade tier only.
 
     Accepted-Best-Offer rows (trap #5: eBay displays the pre-offer asking
     price, biasing averages HIGH) count toward velocity but are excluded
     from price stats — unless they're all we have.
+
+    CRITICAL: velocity counts only sales within `window_days`. Without this,
+    a cache replay of months-old rows resurrects a dead card as LIQUID — the
+    exact dead-inventory trap the gate exists to prevent.
     """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
     rows = [s for s in sales
-            if grading.classify_grade(s["title"]) == tier and s["price"] > 0]
+            if grading.classify_grade(s["title"]) == tier and s["price"] > 0
+            and (s.get("sold_date") or "")[:10] >= cutoff]
     if not rows:
         return None
     rows.sort(key=lambda r: r["sold_date"] or "", reverse=True)
@@ -259,16 +265,26 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
     if out.get("fc_comp"):
         out["win_likely"] = out["fc_comp"] <= max_total
 
+    # Exit-wall check (C3): if several cheaper same-card listings already sit
+    # below our cost, we can't exit at the comp — we'd have to join that
+    # cheaper supply. Demote BID->WATCH. A thin floor (1-2 listings) is
+    # treated as noise, not a wall.
+    exit_wall = (out.get("exit_ok") is False
+                 and (active_supply or 0) >= 3)
+
+    n = out.get("n_sales_90d", 0)
     if headroom <= 0:
         out.update(verdict="PASS", reason="current price already above max bid")
     elif vel is None:
         out.update(verdict="WATCH",
                    reason="FC comps only — eBay sell-through unverified")
+    elif exit_wall:
+        out.update(verdict="WATCH",
+                   reason=f"{active_supply} cheaper listings below cost — "
+                          f"can't exit at comp; bid only well under max")
     elif vel == SLOW:
-        n = out["n_sales_90d"]
         out.update(verdict="WATCH", reason=f"{n} sales/90d — slow mover, bid only well under max")
     else:
-        n = out["n_sales_90d"]
         out.update(verdict="BID", reason=f"liquid ({n} sales/90d), headroom ${headroom:,.0f}")
     return out
 

@@ -71,3 +71,41 @@ def test_comp_filter_error_variant_agreement():
     assert len(plain) == 1 and "Error" not in plain[0]["title"]
     err = normalize.comp_filter("2000 Pokemon Movie Promo Nintedo Error Ancient Mew CGC 10", sales)
     assert len(err) == 1 and "Error" in err[0]["title"]
+
+
+def test_comp_filter_number_ten_not_satisfied_by_grade():
+    # C1: card #10 must NOT match the "10" in "CGC 10" on a different card
+    sales = [
+        {"title": "2002 Pokemon Neo Destiny Dark Typhlosion #10 CGC 10 Gem Mint"},
+        {"title": "2000 Pokemon Neo Genesis Typhlosion #17 CGC 10 Gem Mint"},
+    ]
+    kept = normalize.comp_filter(
+        "2002 Pokemon Neo Destiny Dark Typhlosion #10 CGC 10 Gem Mint", sales)
+    assert [s["title"] for s in kept] == [sales[0]["title"]]
+
+
+def test_comp_filter_subject_word_boundary():
+    # C1: 'mew' (Ancient Mew) must not match 'Mewtwo'
+    sales = [
+        {"title": "2000 Pokemon Movie Promo Ancient Mew CGC 10 Gem Mint"},
+        {"title": "1999 Pokemon Movie Promo Mewtwo #3 CGC 10 Gem Mint"},
+    ]
+    kept = normalize.comp_filter("2000 Pokemon Movie Promo Ancient Mew CGC 10 GEM MINT", sales)
+    assert all("mewtwo" not in s["title"].lower() for s in kept)
+    assert len(kept) == 1
+
+
+def test_comp_filter_accepts_zero_padded_number():
+    # H3: FC "#6" must accept eBay "#006" (and vice versa)
+    sales = [{"title": "1997 Pokemon Bandai Carddass Charizard #006 CGC 10 Gem Mint"}]
+    kept = normalize.comp_filter(
+        "1997 Pokemon Bandai Carddass Charizard #6 CGC 10 Gem Mint", sales)
+    assert len(kept) == 1
+
+
+def test_comp_filter_japanese_without_the_word():
+    # H3: JP set-name hint on the eBay side counts even without literal "Japanese"
+    sales = [{"title": "2000 Pokemon CoroCoro Comic Promo Hama-Chan's Slowking CGC 10 Gem Mint"}]
+    kept = normalize.comp_filter(
+        "2000 Pokemon Japanese CoroCoro Slowking CGC 10 Gem Mint", sales)
+    assert len(kept) == 1
