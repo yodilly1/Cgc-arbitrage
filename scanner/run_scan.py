@@ -18,7 +18,7 @@ import time
 import argparse
 from datetime import datetime, timezone
 
-from . import archive, ebay, fanatics, fees, normalize, report, scoring
+from . import archive, ebay, fanatics, fees, normalize, report, scoring, soldcomps
 
 
 def check_access():
@@ -42,24 +42,26 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
     con = archive.connect(db_path)
     fc = fanatics.FanaticsClient()
     ec = ebay.EbayClient()
+    sc = soldcomps.SoldCompsClient()
     notes = []
 
     access = {"browse": False, "insights": False}
-    if skip_ebay or not ec.has_credentials:
-        comps_source = "none (no eBay credentials)"
-        notes.append("No eBay API keys configured — comps and velocity gate unavailable. "
-                     "Rows show FC data only; bid count is the only demand signal.")
-    else:
+    if not skip_ebay and ec.has_credentials:
         access = ec.check_access()
-        if access["insights"]:
-            comps_source = "eBay Marketplace Insights (90d sold)"
-        elif access["browse"]:
-            comps_source = "eBay Browse (active floor only — NO sold data)"
-            notes.append("Marketplace Insights denied — showing active floor only. "
-                         "Floor is an asking price, not market value.")
-        else:
-            comps_source = "none (eBay auth failed)"
+        if not access["browse"]:
             notes.append(f"eBay auth failed: {access['detail']}")
+
+    # Sold-comp provider chain: Insights (official) > SoldComps (commercial)
+    if access["insights"]:
+        comps_mode, comps_source = "insights", "eBay Marketplace Insights (90d sold)"
+    elif sc.has_key and not skip_ebay:
+        comps_mode, comps_source = "soldcomps", "SoldComps (90d sold, scraped)"
+    else:
+        comps_mode, comps_source = None, "none (no sold-data source)"
+        notes.append("No sold-comp source configured — velocity gate unavailable. "
+                     "Rows show FC data" +
+                     (" + active floor" if access["browse"] else "") +
+                     "; bid count is the main demand signal.")
 
     # ---- 1. ingest ---------------------------------------------------------
     print("Fetching Fanatics weekly-auction sitemaps ...", flush=True)
@@ -72,7 +74,7 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
     lots, errors = [], 0
     for i, u in enumerate(candidates, 1):
         uuid = u.rstrip("/").split("/")[-2]
-        cached = archive.known_closed_lot(con, uuid)
+        cached = archive.cached_lot(con, uuid)
         if cached:
             lots.append(cached)
             continue
@@ -98,28 +100,50 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
     print(f"  {len(live)} live in-scope lots ({errors} fetch errors)")
 
     # ---- 2-4. comps / velocity / floor ------------------------------------
+    # Most expensive lots first, so a capped comp quota covers the lots where
+    # a mistake costs the most.
+    live.sort(key=lambda l: -(l["price_incl_bp"] or 0))
     run_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     comp_cache, floor_cache = {}, {}
+    quota_gone = False
     scored = []
     for lot in live:
         key = normalize.card_key(lot["title"])
         stats = floor = supply = None
 
-        if access["insights"] and key not in comp_cache:
+        if comps_mode and key not in comp_cache and not quota_gone:
             sales = None
             for q in normalize.query_variants(lot["title"]):
-                sales, err = ec.sold(q, grader="CGC", grade="10")
+                if comps_mode == "soldcomps":
+                    q = f"{q} CGC 10"
+                cached = archive.cached_sales(con, q)
+                if cached is not None:
+                    sales = cached
+                    if sales:
+                        break
+                    continue
+                try:
+                    if comps_mode == "insights":
+                        sales, err = ec.sold(q, grader="CGC", grade="10")
+                    else:
+                        sales, err = sc.sold(q)
+                except soldcomps.QuotaExhausted:
+                    quota_gone = True
+                    notes.append("SoldComps quota exhausted mid-scan — remaining "
+                                 "(cheaper) lots have no comps this run.")
+                    break
                 if err:
-                    notes_msg = f"Insights error on '{q[:60]}': {err}"
+                    notes_msg = f"comp lookup error on '{q[:60]}': {err}"
                     if notes_msg not in notes:
                         notes.append(notes_msg)
                     break
+                archive.archive_sales(con, q, sales or [], source=comps_mode)
                 if sales:
-                    archive.archive_sales(con, q, sales)
                     break
                 time.sleep(0.3)
-            comp_cache[key] = sales or []
-        if access["insights"]:
+            if not quota_gone:      # a quota death is "not checked", not "0 sales"
+                comp_cache[key] = sales or []
+        if comps_mode:
             stats = scoring.summarize(comp_cache.get(key, []), lot["grade_class"])
             if stats:
                 archive.record_comp_stats(con, run_at, key, lot["grade_class"], stats)
@@ -140,9 +164,13 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
 
         s = scoring.score_lot(lot, stats, floor, supply,
                               target_margin=target_margin, ad_rate=ad_rate, store=store)
-        if not access["insights"]:
+        no_comp_attempt = (not comps_mode) or \
+            (quota_gone and key not in comp_cache)
+        if no_comp_attempt and s["verdict"] in ("NO_COMPS", "REJECT"):
+            # We didn't look for comps — that's missing data, not a dead card.
             s["verdict"] = "NO_DATA"
-            s["reason"] = "no sold-comp source configured"
+            s["reason"] = ("comp quota exhausted before this lot" if quota_gone
+                           else "no sold-comp source configured")
             s["floor"] = floor
             s["active_supply"] = supply
             # Floor-based signal only (asking price, NOT market value): what

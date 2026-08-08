@@ -33,13 +33,19 @@ def velocity_tier(n_sales):
 
 
 def summarize(sales, tier):
-    """Trimmed, recency-ordered stats for one grade tier only."""
+    """Trimmed, recency-ordered stats for one grade tier only.
+
+    Accepted-Best-Offer rows (trap #5: eBay displays the pre-offer asking
+    price, biasing averages HIGH) count toward velocity but are excluded
+    from price stats — unless they're all we have.
+    """
     rows = [s for s in sales
             if grading.classify_grade(s["title"]) == tier and s["price"] > 0]
     if not rows:
         return None
     rows.sort(key=lambda r: r["sold_date"] or "", reverse=True)
-    prices = sorted(r["price"] for r in rows)
+    priced = [r for r in rows if not r.get("best_offer")] or rows
+    prices = sorted(r["price"] for r in priced)
     if len(prices) >= 5:                       # trim one outlier each side
         prices = prices[1:-1]
 
@@ -47,7 +53,7 @@ def summarize(sales, tier):
     median = prices[n // 2] if n % 2 else (prices[n // 2 - 1] + prices[n // 2]) / 2
     mean = sum(prices) / n
     var = sum((p - mean) ** 2 for p in prices) / n
-    recent = [r["price"] for r in rows[:3]]
+    recent = [r["price"] for r in priced[:3]]
 
     return {
         "grade_class": tier,
@@ -71,6 +77,8 @@ def confidence(n, last_sold_iso, cv):
     if last_sold_iso:
         try:
             last = datetime.fromisoformat(last_sold_iso.replace("Z", "+00:00"))
+            if last.tzinfo is None:      # bare-date form (e.g. SoldComps "2026-08-01")
+                last = last.replace(tzinfo=timezone.utc)
             age = (datetime.now(timezone.utc) - last).days
             rec_score = max(0.0, 1.0 - age / 90.0)
         except ValueError:

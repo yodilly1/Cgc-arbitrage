@@ -36,7 +36,15 @@ CREATE TABLE IF NOT EXISTS scans(
 CREATE TABLE IF NOT EXISTS comp_stats(
     run_at TEXT, card_key TEXT, grade_class TEXT, stats_json TEXT,
     PRIMARY KEY (run_at, card_key, grade_class));
+CREATE TABLE IF NOT EXISTS sold_fetches(
+    query TEXT PRIMARY KEY, source TEXT, fetched_at TEXT, n_results INTEGER);
 """
+
+
+def _migrate(con):
+    cols = [r[1] for r in con.execute("PRAGMA table_info(ebay_sales)")]
+    if "best_offer" not in cols:
+        con.execute("ALTER TABLE ebay_sales ADD COLUMN best_offer INTEGER DEFAULT 0")
 
 
 def connect(path=None):
@@ -46,6 +54,7 @@ def connect(path=None):
         os.makedirs(d, exist_ok=True)
     con = sqlite3.connect(path)
     con.executescript(_SCHEMA)
+    _migrate(con)
     return con
 
 
@@ -53,16 +62,46 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def archive_sales(con, query, sales):
+def archive_sales(con, query, sales, source="insights"):
     now = _now()
     for s in sales:
         con.execute(
-            "INSERT OR IGNORE INTO ebay_sales VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO ebay_sales VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (s["item_id"], query, s["title"], grading.classify_grade(s["title"]),
              s["price"], s.get("currency", "USD"), s["sold_date"],
              s.get("condition", ""), s.get("qty_sold", 1), s.get("bid_count"),
-             s.get("epid", ""), now))
+             s.get("epid", ""), now, 1 if s.get("best_offer") else 0))
+    con.execute("INSERT OR REPLACE INTO sold_fetches VALUES (?,?,?,?)",
+                (query, source, now, len(sales)))
     con.commit()
+
+
+def cached_sales(con, query, max_age_hours=132):
+    """Return archived sales for a query fetched within the TTL, else None.
+
+    Default TTL (5.5 days) means the Friday scan's paid API calls are reused
+    by Sunday's scan, but next week refetches. Keeps trial/monthly quota from
+    being spent twice on the same card in one auction cycle.
+    """
+    row = con.execute("SELECT fetched_at FROM sold_fetches WHERE query=?",
+                      (query,)).fetchone()
+    if not row:
+        return None
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(row[0])
+    except ValueError:
+        return None
+    if age.total_seconds() > max_age_hours * 3600:
+        return None
+    out = []
+    for r in con.execute(
+            "SELECT item_id,title,price,currency,sold_date,condition,qty_sold,"
+            "bid_count,epid,best_offer FROM ebay_sales WHERE query=?", (query,)):
+        out.append({"item_id": r[0], "title": r[1], "price": r[2],
+                    "currency": r[3], "sold_date": r[4], "condition": r[5],
+                    "qty_sold": r[6], "bid_count": r[7], "epid": r[8],
+                    "best_offer": bool(r[9])})
+    return out
 
 
 def archive_lot(con, lot):
@@ -86,15 +125,25 @@ def record_comp_stats(con, run_at, card_key, grade_class, stats):
                 (run_at, card_key, grade_class, json.dumps(stats)))
 
 
-def known_closed_lot(con, uuid):
-    """Closed lots never change — reuse the archived row instead of refetching."""
+def cached_lot(con, uuid, max_age_hours=6):
+    """Reuse an archived lot row: closed lots never change (no TTL); active
+    lots are reusable within `max_age_hours` (bids move, but not enough to
+    refetch twice in one evening)."""
     row = con.execute(
         "SELECT uuid,url,title,listing_type,grade_class,language,product_line,"
         "year,hammer,price_incl_bp,bids,lot_string,auction_name,auction_ends_at,"
-        "auction_status,is_closed,sold_date FROM fc_lots WHERE uuid=? AND is_closed=1",
+        "auction_status,is_closed,sold_date,captured_at FROM fc_lots WHERE uuid=?",
         (uuid,)).fetchone()
     if not row:
         return None
+    if not row[15]:                                   # active -> check freshness
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(row[17])
+        except (ValueError, TypeError):
+            return None
+        if age.total_seconds() > max_age_hours * 3600:
+            return None
+    row = row[:17]
     keys = ["uuid", "url", "title", "listing_type", "grade_class", "language",
             "product_line", "year", "hammer", "price_incl_bp", "bids",
             "lot_string", "auction_name", "auction_ends_at", "auction_status",

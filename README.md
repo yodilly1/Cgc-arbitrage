@@ -45,12 +45,17 @@ Someone (Lee or a helper) does this once in the GitHub repo settings:
    - Note: sold-price data needs eBay's **Marketplace Insights** API, which
      is limited-release — apply for it in the eBay developer portal. The
      first scan log (Actions tab) reports exactly which access you have.
-2. **Email delivery** *(optional)*
+2. **SoldComps key** *(enables sold comps + the liquidity filter)*
+   - Add secret `SOLDCOMPS_API_KEY` = your `sc_…` key from sold-comps.com.
+   - Used automatically whenever eBay Marketplace Insights is unavailable.
+   - Note: SoldComps scrapes eBay, which eBay's terms prohibit — realistic
+     risk is IP/account blocking, not legal exposure. Operator's choice.
+3. **Email delivery** *(optional)*
    - Create a free [resend.com](https://resend.com) account, copy the API key.
    - Add secrets `RESEND_API_KEY` and `REPORT_EMAIL` (the address to send to).
-3. **Hosted report page** *(optional)*
+4. **Hosted report page** *(optional)*
    - Repo → Settings → Pages → Source: **GitHub Actions**.
-4. The scan runs automatically Friday and Sunday (from the default branch).
+5. The scan runs automatically Friday and Sunday (from the default branch).
    To run it right now: **Actions → weekly-scan → Run workflow**.
 
 No secrets at all? It still runs — you get the lot sheet with Fanatics

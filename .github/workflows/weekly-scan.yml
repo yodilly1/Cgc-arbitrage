@@ -8,7 +8,8 @@
 # NOTE: GitHub only fires `schedule` triggers from the DEFAULT branch.
 #
 # Optional repository secrets (Settings -> Secrets and variables -> Actions):
-#   EBAY_CLIENT_ID / EBAY_CLIENT_SECRET  - production keys; enables comps
+#   EBAY_CLIENT_ID / EBAY_CLIENT_SECRET  - production keys; enables active floor
+#   SOLDCOMPS_API_KEY                    - sold comps + velocity gate
 #   RESEND_API_KEY + REPORT_EMAIL        - emails the report each run
 # With no secrets at all the scan still runs (FC data only) and publishes
 # the report page.
@@ -51,6 +52,7 @@ jobs:
         env:
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          SOLDCOMPS_API_KEY: ${{ secrets.SOLDCOMPS_API_KEY }}
         run: python -m scanner.run_scan
 
       - name: Commit archive + report
