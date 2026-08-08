@@ -23,12 +23,23 @@ def test_hammer_round_trip():
     assert fees.total_from_hammer(1000) == 1200
 
 
-def test_max_fc_total():
-    # paying max_fc_total then selling at target hits exactly the margin
+def test_max_fc_total_includes_withdrawal_fee():
+    # paying max_fc_total, the ALL-IN cost (price + 3% withdrawal) hits
+    # exactly the target margin when selling at target
     target = 1000.0
-    max_total = fees.max_fc_total(target, margin=0.25)
+    max_total = fees.max_fc_total(target, margin=0.20)
+    all_in = fees.fc_total_cost(max_total)
     net = fees.ebay_net_proceeds(target)
-    assert abs(net / max_total - 1.25) < 1e-9
+    assert abs(net / all_in - 1.20) < 1e-9
+
+
+def test_withdrawal_fee_tiers():
+    # verified fanaticscollect.com/thevault: 3% quick / 1% held / $3 under $50
+    assert fees.fc_withdrawal_fee(1000) == 30.0
+    assert fees.fc_withdrawal_fee(1000, quick=False) == 10.0
+    assert fees.fc_withdrawal_fee(30) == 3.0
+    assert abs(fees.fc_total_cost(120) - 120 * 1.03) < 1e-9
+    assert fees.fc_total_cost(30) == 33.0
 
 
 def test_store_fee_schedule():

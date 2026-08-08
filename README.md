@@ -19,18 +19,21 @@ removed.
    - at the project's GitHub Pages link (once enabled below), and
    - in this repo at [`reports/latest.html`](reports/latest.html).
 2. **Only look at the green BID rows.** They're sorted best-first.
-3. **The "Max bid (w/ BP)" column is the total you can pay** — including
-   Fanatics' 20% buyer's premium — and still clear the target margin (25%)
-   after every eBay fee. The small "hammer" number underneath is what to
-   actually type into the bid box.
+3. **The "Max bid (w/ BP)" column is the highest displayed price you can
+   pay** — including Fanatics' 20% buyer's premium — and still clear the
+   **20% target margin** after the vault withdrawal fee (3% when you pull a
+   card within 90 days; flat $3 under $50) and every eBay fee, selling at
+   the comp. No sales tax since purchases stay in the vault. The small
+   "hammer" number underneath is what to actually type into the bid box.
 4. Anything with **0–2 eBay sales in the last 90 days is already filtered
    out**, no matter how cheap. That's the point of the system: those are the
    cards that sit in inventory for months.
 
-**One number to remember:** you need roughly a **15% spread just to break
-even** (eBay fees + shipping), and about **44% to net a 25% margin**.
-"Buying at 80% of market" only yields ~5% gross — too thin. The sheet's max
-bid already accounts for all of this.
+**One number to remember:** you need roughly a **20% spread just to break
+even** (eBay fees + shipping + the 3% withdrawal fee — more like 24% on
+sub-$300 cards), and about **44% to net a 20% margin**. "Buying at 80% of
+market" only yields ~3–5% — far too thin. The sheet's max bid already
+accounts for all of this.
 
 ## One-time setup (5 minutes, all clicking)
 

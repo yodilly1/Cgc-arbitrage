@@ -126,8 +126,9 @@ comps: {html.escape(comps_source or 'unavailable')} ·
 <details><summary>Filtered out — illiquid / no comps ({len(rejected)})</summary>
 <div class="wrap"><table><tr><th>Card</th><th>Now</th><th>Why filtered</th></tr>
 {rej_rows}</table></div></details>
-<p class="meta">Max bid = highest total (incl. 20% premium) that still nets the
-target margin after all eBay fees if sold at the comp. "hammer" is the number
-to actually type in the bid box. Velocity gate: anything with 0–2 sales in 90
-days is filtered out automatically.</p>
+<p class="meta">Max bid = highest displayed price (incl. 20% premium) that still
+nets the 20% target margin after the 3% vault withdrawal fee ($3 flat under
+$50) and all eBay fees, selling at the comp. "hammer" is the number to
+actually type in the bid box. No sales tax (vault purchase). Velocity gate:
+anything with 0–2 sales in 90 days is filtered out automatically.</p>
 </body></html>"""

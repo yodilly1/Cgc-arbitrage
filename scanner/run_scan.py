@@ -37,7 +37,7 @@ def check_access():
     return res
 
 
-def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
+def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
          ad_rate=0.0, store=False, skip_ebay=False, max_year=2009):
     con = archive.connect(db_path)
     fc = fanatics.FanaticsClient()
@@ -177,8 +177,9 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.25,
             # you'd net listing 3% under the cheapest competing BIN, vs cost.
             if floor and s.get("current_total"):
                 net_uc = fees.ebay_net_proceeds(floor * 0.97)
+                all_in = fees.fc_total_cost(s["current_total"])
                 s["net_if_undercut_floor"] = round(net_uc, 2)
-                s["floor_gap_pct"] = round((net_uc / s["current_total"] - 1) * 100, 1)
+                s["floor_gap_pct"] = round((net_uc / all_in - 1) * 100, 1)
         scored.append(s)
     con.commit()
 
@@ -213,7 +214,7 @@ def main(argv=None):
     ap.add_argument("--skip-ebay", action="store_true", help="FC-only scan")
     ap.add_argument("--db", default=None, help="sqlite path (default data/archive.sqlite)")
     ap.add_argument("--out", default="reports")
-    ap.add_argument("--margin", type=float, default=0.25, help="target net margin")
+    ap.add_argument("--margin", type=float, default=0.20, help="target net margin")
     ap.add_argument("--ad-rate", type=float, default=0.0, help="promoted listings rate")
     ap.add_argument("--store", action="store_true", help="eBay Basic Store fee schedule")
     ap.add_argument("--max-year", type=int, default=2009)

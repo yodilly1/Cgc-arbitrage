@@ -7,6 +7,17 @@ Unit-test anchor: ebay_net_proceeds(1000) == 855.10 exactly.
 # Fanatics Collect (buy side)
 FC_BUYERS_PREMIUM = 0.20        # flat, Weekly + Premier; lot pages display price W/ premium
 
+# Vault economics (verified fanaticscollect.com/thevault, Aug 2026):
+# purchases vault for free with NO sales tax; withdrawing ("fulfilling") to
+# ship out costs 1% of value — 3% if removed within 90 days of purchase.
+# Items under $50 pay a flat $3 instead. The quick-flip-to-eBay flow always
+# hits the 3% tier. ("Free if sold in 30 days" applies to selling ON
+# Fanatics only — irrelevant here.)
+FC_WITHDRAWAL_RATE_QUICK = 0.03   # removed within 90 days (the normal case)
+FC_WITHDRAWAL_RATE_HELD = 0.01    # held 90+ days before withdrawal
+FC_WITHDRAWAL_FLAT_UNDER_50 = 3.00
+FC_WITHDRAWAL_FLAT_THRESHOLD = 50.0
+
 # eBay (sell side) — trading cards category
 EBAY_FVF = 0.1325               # non-Store, portion up to $7,500
 EBAY_FVF_ABOVE = 0.0235         # portion above threshold
@@ -31,23 +42,41 @@ def ebay_net_proceeds(sale_price, ad_rate=0.0, store=False):
     return sale_price - fees - SHIP_COST
 
 
-def breakeven_ebay_price(fc_cost, ad_rate=0.0, store=False):
-    """Minimum eBay sale price to break even on an FC purchase (incl. premium)."""
-    lo, hi = 0.0, max(fc_cost * 3, 100.0)
+def fc_withdrawal_fee(price_incl_bp, quick=True):
+    """Vault fulfillment fee to ship a purchased card out."""
+    if price_incl_bp < FC_WITHDRAWAL_FLAT_THRESHOLD:
+        return FC_WITHDRAWAL_FLAT_UNDER_50
+    rate = FC_WITHDRAWAL_RATE_QUICK if quick else FC_WITHDRAWAL_RATE_HELD
+    return price_incl_bp * rate
+
+
+def fc_total_cost(price_incl_bp, quick=True):
+    """All-in cost of an FC purchase: displayed price (incl. 20% premium)
+    + vault withdrawal fee. No sales tax (vault purchase)."""
+    return price_incl_bp + fc_withdrawal_fee(price_incl_bp, quick)
+
+
+def breakeven_ebay_price(fc_all_in_cost, ad_rate=0.0, store=False):
+    """Minimum eBay sale price to break even on an all-in FC cost."""
+    lo, hi = 0.0, max(fc_all_in_cost * 3, 100.0)
     for _ in range(60):
         mid = (lo + hi) / 2
-        if ebay_net_proceeds(mid, ad_rate, store) < fc_cost:
+        if ebay_net_proceeds(mid, ad_rate, store) < fc_all_in_cost:
             lo = mid
         else:
             hi = mid
     return hi
 
 
-def max_fc_total(target_ebay_price, margin=0.25, ad_rate=0.0, store=False):
-    """Max total FC cost (incl. 20% premium) that still nets `margin` when
-    selling at `target_ebay_price`."""
-    net = ebay_net_proceeds(target_ebay_price, ad_rate, store)
-    return net / (1.0 + margin)
+def max_fc_total(target_ebay_price, margin=0.20, ad_rate=0.0, store=False, quick=True):
+    """Max displayed FC price (incl. 20% premium) that still nets `margin`
+    when selling at `target_ebay_price`, after the vault withdrawal fee."""
+    budget = ebay_net_proceeds(target_ebay_price, ad_rate, store) / (1.0 + margin)
+    rate = FC_WITHDRAWAL_RATE_QUICK if quick else FC_WITHDRAWAL_RATE_HELD
+    price = budget / (1.0 + rate)
+    if price < FC_WITHDRAWAL_FLAT_THRESHOLD:
+        price = budget - FC_WITHDRAWAL_FLAT_UNDER_50
+    return max(price, 0.0)
 
 
 def hammer_from_total(total_incl_bp):

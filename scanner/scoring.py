@@ -19,7 +19,8 @@ ILLIQUID = "ILLIQUID"  # 1-2      -> flag prominently, usually reject
 SLOW = "SLOW"          # 3-5
 LIQUID = "LIQUID"      # 6+
 
-TARGET_MARGIN = 0.25
+# Operator target: 20% net margin on a quick sale at market price.
+TARGET_MARGIN = 0.20
 
 
 def velocity_tier(n_sales):
@@ -139,16 +140,20 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
     max_hammer = fees.hammer_from_total(max_total)
     net_at_market = fees.ebay_net_proceeds(market, ad_rate, store)
 
+    # Cost basis is ALL-IN: displayed price (incl. 20% BP) + vault
+    # withdrawal fee (3% quick-flip tier; flat $3 under $50). No sales tax.
     cur_total = lot["price_incl_bp"] or 0.0
+    all_in = fees.fc_total_cost(cur_total) if cur_total else 0.0
     headroom = max_total - cur_total
-    margin_now = (net_at_market - cur_total) / cur_total if cur_total else None
+    margin_now = (net_at_market - all_in) / all_in if all_in else None
 
     out.update(
         required_margin_pct=round(required_margin * 100, 1),
         max_bid_total=round(max_total, 2),
         max_bid_hammer=round(max_hammer, 2),
         net_if_sold_at_comp=round(net_at_market, 2),
-        breakeven_ebay_price=round(fees.breakeven_ebay_price(cur_total, ad_rate, store), 2) if cur_total else None,
+        all_in_cost=round(all_in, 2) if all_in else None,
+        breakeven_ebay_price=round(fees.breakeven_ebay_price(all_in, ad_rate, store), 2) if all_in else None,
         headroom=round(headroom, 2),
         margin_at_current_pct=round(margin_now * 100, 1) if margin_now is not None else None,
     )
@@ -160,7 +165,7 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
             floor=floor_price,
             active_supply=active_supply,
             net_if_undercut_floor=round(net_uc, 2),
-            exit_ok=bool(cur_total) and net_uc >= cur_total * 1.10,
+            exit_ok=bool(all_in) and net_uc >= all_in * 1.10,
         )
 
     if headroom <= 0:
