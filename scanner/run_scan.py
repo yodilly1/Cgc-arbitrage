@@ -149,7 +149,10 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
                          and normalize.comp_filter(lot["title"], [{"title": r["title"]}])]
                 st = scoring.fc_summarize(cands)
                 if st:
-                    fc_comps_by_key[normalize.card_key(lot["title"])] = st
+                    # Key MUST include the tier — Pristine and Gem Mint are
+                    # different markets and must never share FC stats.
+                    fc_comps_by_key[(normalize.card_key(lot["title"]),
+                                     lot["grade_class"])] = st
             print(f"  FC comps available for {len(fc_comps_by_key)} cards", flush=True)
         except Exception as e:  # noqa: BLE001 - FC comps are additive, not critical
             notes.append(f"FC sales-history comps unavailable this run: {e}")
@@ -256,13 +259,13 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
     pairs, paired_keys = [], set()
     for lot in live:
         key = normalize.card_key(lot["title"])
-        fcst = fc_comps_by_key.get(key)
-        if not fcst or key in paired_keys or key not in comp_cache:
+        fcst = fc_comps_by_key.get((key, lot["grade_class"]))
+        if not fcst or (key, lot["grade_class"]) in paired_keys or key not in comp_cache:
             continue
         st = scoring.summarize(
             normalize.comp_filter(lot["title"], comp_cache[key]), lot["grade_class"])
         if st:
-            paired_keys.add(key)
+            paired_keys.add((key, lot["grade_class"]))
             pairs.append((min(fcst["last_3_avg"], fcst["median"]),
                           scoring.comp_value(st)))
     fc_ratio = scoring.fc_calibration_ratio(pairs)
@@ -290,7 +293,8 @@ def scan(max_lots=None, db_path=None, out_dir="reports", target_margin=0.20,
 
         s = scoring.score_lot(lot, stats, floor, supply,
                               target_margin=target_margin, ad_rate=ad_rate,
-                              store=store, fc_stats=fc_comps_by_key.get(key),
+                              store=store,
+                              fc_stats=fc_comps_by_key.get((key, lot["grade_class"])),
                               fc_ratio=fc_ratio)
         no_comp_attempt = (not comps_mode) or key not in comp_cache
         if no_comp_attempt and s["verdict"] in ("NO_COMPS", "REJECT"):

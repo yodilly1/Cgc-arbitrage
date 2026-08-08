@@ -72,6 +72,7 @@ def comp_filter(fc_title, sales):
         subject = words[-1] if words else None
     first_ed = "1st" in q
     shadowless = "shadowless" in q
+    error_var = "error" in q
     japanese = grading.detect_language(fc_title) == "JA"
 
     out = []
@@ -84,6 +85,8 @@ def comp_filter(fc_title, sales):
         if first_ed != ("1st" in t or "first ed" in t):
             continue
         if shadowless != ("shadowless" in t):
+            continue
+        if error_var != ("error" in t):     # error variants price differently
             continue
         if japanese != ("japanese" in t or "japan " in t):
             continue

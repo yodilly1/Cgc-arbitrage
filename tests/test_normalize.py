@@ -60,3 +60,14 @@ def test_comp_filter_edition_and_language_agreement():
     kept_1st = normalize.comp_filter(
         "1999 Pokemon Base Set 1st Edition Pikachu #58 CGC 10", sales)
     assert [s["title"] for s in kept_1st] == ["1999 Pokemon Base Set 1st Edition Pikachu #58 CGC 10"]
+
+
+def test_comp_filter_error_variant_agreement():
+    sales = [
+        {"title": "2000 Pokemon Movie Promo Ancient Mew CGC 10"},
+        {"title": "2000 Pokemon Movie Promo Nintendo Error Ancient Mew CGC 10"},
+    ]
+    plain = normalize.comp_filter("2000 Pokemon Movie Promo Ancient Mew CGC 10 GEM MINT", sales)
+    assert len(plain) == 1 and "Error" not in plain[0]["title"]
+    err = normalize.comp_filter("2000 Pokemon Movie Promo Nintedo Error Ancient Mew CGC 10", sales)
+    assert len(err) == 1 and "Error" in err[0]["title"]
