@@ -1,0 +1,83 @@
+from scanner import scoring
+
+
+def _sales(prices_dates, tier="CGC 10 Gem Mint"):
+    return [{"title": f"1999 Pokemon Jungle Snorlax #11 {tier}",
+             "price": p, "sold_date": d} for p, d in prices_dates]
+
+
+def _lot(total=120.0, tier="CGC10_GEM"):
+    return {
+        "uuid": "u", "url": "http://x", "title": "1999 Pokemon Jungle Snorlax #11 CGC 10 Gem Mint",
+        "lot_string": "WA238 Lot: 1", "grade_class": tier, "language": "EN",
+        "product_line": "TCG", "year": 1999, "bids": 5,
+        "price_incl_bp": total, "hammer": total / 1.2,
+        "auction_ends_at": "2026-08-10T02:00:00Z",
+    }
+
+
+def test_velocity_tiers():
+    assert scoring.velocity_tier(0) == scoring.DEAD
+    assert scoring.velocity_tier(2) == scoring.ILLIQUID
+    assert scoring.velocity_tier(5) == scoring.SLOW
+    assert scoring.velocity_tier(6) == scoring.LIQUID
+
+
+def test_zero_sales_is_a_hard_reject():
+    # Velocity is a GATE: no comps in tier -> REJECT no matter the discount
+    s = scoring.score_lot(_lot(total=1.0), None)
+    assert s["verdict"] == "NO_COMPS"
+    stats = scoring.summarize(_sales([]), "CGC10_GEM")
+    assert stats is None
+
+
+def test_pristine_and_gem_never_pooled():
+    sales = _sales([(100, "2026-08-01T00:00:00Z")] * 6, tier="CGC 10 Gem Mint") + \
+            _sales([(5000, "2026-08-01T00:00:00Z")] * 6, tier="CGC 10 Pristine")
+    gem = scoring.summarize(sales, "CGC10_GEM")
+    pris = scoring.summarize(sales, "CGC10_PRISTINE")
+    assert gem["n_sales_90d"] == 6 and gem["median"] == 100
+    assert pris["n_sales_90d"] == 6 and pris["median"] == 5000
+
+
+def test_illiquid_rejected_even_when_cheap():
+    sales = _sales([(1000, "2026-08-01T00:00:00Z"), (990, "2026-07-01T00:00:00Z")])
+    stats = scoring.summarize(sales, "CGC10_GEM")
+    s = scoring.score_lot(_lot(total=100.0), stats)   # 90% "discount"
+    assert s["verdict"] == "REJECT"
+    assert "illiquid" in s["reason"]
+
+
+def test_liquid_cheap_lot_is_bid():
+    sales = _sales([(500, f"2026-0{m}-01T00:00:00Z") for m in range(1, 9)])
+    stats = scoring.summarize(sales, "CGC10_GEM")
+    s = scoring.score_lot(_lot(total=120.0), stats)
+    assert s["verdict"] == "BID"
+    assert s["max_bid_total"] > 120.0
+    assert s["max_bid_hammer"] < s["max_bid_total"]
+
+
+def test_overpriced_lot_passes():
+    sales = _sales([(500, f"2026-0{m}-01T00:00:00Z") for m in range(1, 9)])
+    stats = scoring.summarize(sales, "CGC10_GEM")
+    s = scoring.score_lot(_lot(total=490.0), stats)
+    assert s["verdict"] == "PASS"
+
+
+def test_low_confidence_widens_margin():
+    tight = _sales([(500, "2026-08-05T00:00:00Z")] * 8)
+    wild = _sales([(200, "2026-05-01T00:00:00Z"), (900, "2026-04-01T00:00:00Z"),
+                   (150, "2026-03-15T00:00:00Z"), (800, "2026-03-01T00:00:00Z"),
+                   (300, "2026-02-20T00:00:00Z"), (700, "2026-02-10T00:00:00Z")])
+    st_t = scoring.summarize(tight, "CGC10_GEM")
+    st_w = scoring.summarize(wild, "CGC10_GEM")
+    assert st_t["confidence"] > st_w["confidence"]
+    s_t = scoring.score_lot(_lot(), st_t)
+    s_w = scoring.score_lot(_lot(), st_w)
+    assert s_w["required_margin_pct"] > s_t["required_margin_pct"]
+
+
+def test_comp_value_is_conservative():
+    # Best-Offer bias skews sold averages HIGH -> take the lower of last3/median
+    stats = {"last_3_avg": 600.0, "median": 500.0}
+    assert scoring.comp_value(stats) == 500.0

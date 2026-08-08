@@ -1,0 +1,102 @@
+# Weekly FC -> eBay arbitrage scan.
+#
+# Runs twice around each Weekly Sunday Auction (closes Sunday ~7 PM PT):
+#   - Friday 11:00 UTC  : early look, time to research
+#   - Sunday 14:00 UTC  : final numbers ~5h before extended bidding
+# Also runnable by hand from the Actions tab ("Run workflow").
+#
+# NOTE: GitHub only fires `schedule` triggers from the DEFAULT branch.
+#
+# Optional repository secrets (Settings -> Secrets and variables -> Actions):
+#   EBAY_CLIENT_ID / EBAY_CLIENT_SECRET  - production keys; enables comps
+#   RESEND_API_KEY + REPORT_EMAIL        - emails the report each run
+# With no secrets at all the scan still runs (FC data only) and publishes
+# the report page.
+
+name: weekly-scan
+
+on:
+  schedule:
+    - cron: "0 11 * * 5"
+    - cron: "0 14 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-scan
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Run scan
+        env:
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+        run: python -m scanner.run_scan
+
+      - name: Commit archive + report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data reports
+          git diff --cached --quiet || git commit -m "Weekly scan $(date -u +%F)"
+          git push
+
+      - name: Email report
+        if: ${{ secrets.RESEND_API_KEY != '' && secrets.REPORT_EMAIL != '' }}
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL: ${{ secrets.REPORT_EMAIL }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          html = open("reports/latest.html").read()
+          req = urllib.request.Request(
+              "https://api.resend.com/emails",
+              data=json.dumps({
+                  "from": "FC Scanner <onboarding@resend.dev>",
+                  "to": [os.environ["REPORT_EMAIL"]],
+                  "subject": "Weekly Fanatics -> eBay scan",
+                  "html": html,
+              }).encode(),
+              headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+                       "Content-Type": "application/json"})
+          print(urllib.request.urlopen(req).status)
+          PY
+
+      - name: Upload report page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: reports
+
+  publish:
+    # Publishes reports/ to GitHub Pages. Requires one-time setup:
+    # Settings -> Pages -> Source: "GitHub Actions". Harmless failure until then.
+    needs: scan
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
