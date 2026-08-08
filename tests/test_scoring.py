@@ -87,16 +87,28 @@ def test_overpriced_lot_passes():
 
 
 def test_exit_wall_demotes_bid_to_watch():
-    # C3: cheaper same-card supply below cost -> can't exit at comp -> WATCH
+    # C3: >=3 cheaper same-card listings priced BELOW max-bid cost -> WATCH.
+    # comp $500 -> max bid ~$370 total, all-in ~$381. A floor of $150 with 5
+    # listings is a genuine wall of cheaper supply.
     sales = _recent_sales([500] * 8)
     stats = scoring.summarize(sales, "CGC10_GEM")
-    # floor $130 with 5 competing listings; all-in cost ~$124 -> undercut nets < cost
-    s = scoring.score_lot(_lot(total=120.0), stats, floor_price=130.0, active_supply=5)
-    assert s["exit_ok"] is False
+    s = scoring.score_lot(_lot(total=120.0), stats, floor_price=150.0, active_supply=5)
     assert s["verdict"] == "WATCH"
-    # thin supply (1 listing) is treated as noise -> stays BID
-    s2 = scoring.score_lot(_lot(total=120.0), stats, floor_price=130.0, active_supply=1)
+    # thin supply (1 listing) is noise -> stays BID
+    s2 = scoring.score_lot(_lot(total=120.0), stats, floor_price=150.0, active_supply=1)
     assert s2["verdict"] == "BID"
+
+
+def test_no_bid_lot_with_high_floor_stays_bid():
+    # regression: a no-bid lot (current price 0) whose floor is ABOVE cost
+    # must NOT be demoted — the floor being above cost is normal, not a wall.
+    sales = _recent_sales([650] * 40)
+    stats = scoring.summarize(sales, "CGC10_GEM")
+    lot = _lot(total=0.0)                 # no bids yet
+    lot["price_incl_bp"] = None
+    s = scoring.score_lot(lot, stats, floor_price=699.0, active_supply=9)
+    assert s["exit_ok"] is True
+    assert s["verdict"] == "BID"
 
 
 def test_low_confidence_widens_margin():

@@ -250,6 +250,12 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
         margin_at_current_pct=round(margin_now * 100, 1) if margin_now is not None else None,
     )
 
+    # Cost basis for the exit check is what he'd pay at the MAX BID (worst
+    # case), not the current bid — a no-bid lot has current cost ~0, which
+    # must not read as "can't exit".
+    all_in_at_max = fees.fc_total_cost(max_total)
+
+    exit_wall = False
     if floor_price is not None:
         undercut = floor_price * 0.97           # exit strategy: list just under floor
         net_uc = fees.ebay_net_proceeds(undercut, ad_rate, store)
@@ -257,20 +263,17 @@ def score_lot(lot, stats, floor_price=None, active_supply=None,
             floor=floor_price,
             active_supply=active_supply,
             net_if_undercut_floor=round(net_uc, 2),
-            exit_ok=bool(all_in) and net_uc >= all_in * 1.10,
+            exit_ok=net_uc >= all_in_at_max,
         )
+        # Exit-wall (C3): >=3 same-card listings priced BELOW what he'd pay
+        # means cheaper supply he'd have to compete with — can't sell at comp.
+        # A floor above his cost (asking > cost) is normal, not a wall.
+        exit_wall = (active_supply or 0) >= 3 and floor_price < all_in_at_max
 
     # Acquisition odds: if this card's typical FC clearing price is above
     # the max bid, winning at a profitable price is unlikely.
     if out.get("fc_comp"):
         out["win_likely"] = out["fc_comp"] <= max_total
-
-    # Exit-wall check (C3): if several cheaper same-card listings already sit
-    # below our cost, we can't exit at the comp — we'd have to join that
-    # cheaper supply. Demote BID->WATCH. A thin floor (1-2 listings) is
-    # treated as noise, not a wall.
-    exit_wall = (out.get("exit_ok") is False
-                 and (active_supply or 0) >= 3)
 
     n = out.get("n_sales_90d", 0)
     if headroom <= 0:
