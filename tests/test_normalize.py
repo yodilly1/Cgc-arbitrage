@@ -109,3 +109,18 @@ def test_comp_filter_japanese_without_the_word():
     kept = normalize.comp_filter(
         "2000 Pokemon Japanese CoroCoro Slowking CGC 10 Gem Mint", sales)
     assert len(kept) == 1
+
+
+def test_comp_filter_excludes_insert_variant():
+    # Real trap: the paper "Insert Card" shares the name Ancient Mew and also
+    # grades CGC 10, but is a different ~$50 item — must not price the holo.
+    sales = [
+        {"title": "Pokemon CGC 10 Gem Mint 2000 Movie Promo Ancient Mew Insert Card"},
+        {"title": "CGC 10 GEM MINT Ancient Mew Holo Pokemon 2000 WOTC Movie Promo"},
+    ]
+    kept = normalize.comp_filter("2000 Pokemon Movie Promo Ancient Mew CGC 10 GEM MINT", sales)
+    assert len(kept) == 1 and "insert" not in kept[0]["title"].lower()
+    # and if the FC lot IS an insert, keep only inserts
+    kept_ins = normalize.comp_filter(
+        "2000 Pokemon Movie Promo Ancient Mew Insert Card CGC 10 GEM MINT", sales)
+    assert len(kept_ins) == 1 and "insert" in kept_ins[0]["title"].lower()

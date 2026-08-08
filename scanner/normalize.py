@@ -74,6 +74,11 @@ def comp_filter(fc_title, sales):
     shadowless = "shadowless" in q
     error_var = "error" in q
     japanese = grading.detect_language(fc_title) == "JA"
+    # Junk look-alikes that share a card's name but are a different, cheaper
+    # item (paper movie "insert card", oversized "jumbo"). If the FC lot isn't
+    # one of these, exclude comps/floor listings that are — otherwise a $50
+    # insert poisons the floor of a $700 holo promo.
+    _VARIANT_WORDS = ("insert", "jumbo", "oversized", "sealed")
 
     # Grade tokens must not leak into card-number matching: "CGC 10" would
     # satisfy a #10 (or #1) card-number check on EVERY comp title.
@@ -94,6 +99,9 @@ def comp_filter(fc_title, sales):
         if shadowless != ("shadowless" in t):
             continue
         if error_var != ("error" in t):     # error variants price differently
+            continue
+        # a variant word must match on both sides (present-or-absent)
+        if any((w in q) != (w in t) for w in _VARIANT_WORDS):
             continue
         if japanese != (grading.detect_language(t) == "JA"):
             continue                        # symmetric: set-name hints count on both sides
